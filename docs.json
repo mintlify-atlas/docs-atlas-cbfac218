@@ -69,7 +69,8 @@
               "k8s-scheduler/api/organizations",
               "k8s-scheduler/api/deployments",
               "k8s-scheduler/api/templates",
-              "k8s-scheduler/api/secrets"
+              "k8s-scheduler/api/secrets",
+              "k8s-scheduler/api/advanced"
             ]
           }
         ]

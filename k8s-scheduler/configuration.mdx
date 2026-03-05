@@ -127,6 +127,14 @@ These can be skipped when `DEV_MODE=true` for local development.
   - User `alice` → namespace `sandbox-alice`
 </ParamField>
 
+<ParamField path="KUBERNETES_RECONCILE_INTERVAL" type="duration" default="30s">
+  Interval for reconciling deployment status from Kubernetes.
+
+  ```bash
+  KUBERNETES_RECONCILE_INTERVAL="30s"
+  ```
+</ParamField>
+
 ### Session Configuration
 
 <ParamField path="SESSION_BACKEND" type="string" default="memory">
@@ -178,6 +186,38 @@ These can be skipped when `DEV_MODE=true` for local development.
 
   ```bash
   SESSION_COOKIE_NAME="session_id"
+  ```
+</ParamField>
+
+<ParamField path="SESSION_DURATION" type="duration" default="24h">
+  Session lifetime before expiration.
+
+  ```bash
+  SESSION_DURATION="24h"
+  ```
+</ParamField>
+
+<ParamField path="SESSION_CLEANUP_INTERVAL" type="duration" default="1h">
+  Interval for cleaning up expired sessions (memory and PostgreSQL backends only).
+
+  ```bash
+  SESSION_CLEANUP_INTERVAL="1h"
+  ```
+</ParamField>
+
+<ParamField path="SESSION_COOKIE_DOMAIN" type="string">
+  Cookie domain for session cookies. Useful for subdomain sharing.
+
+  ```bash
+  SESSION_COOKIE_DOMAIN=".example.com"
+  ```
+</ParamField>
+
+<ParamField path="STATE_COOKIE_NAME" type="string" default="oauth_state">
+  Cookie name for OAuth state parameter.
+
+  ```bash
+  STATE_COOKIE_NAME="oauth_state"
   ```
 </ParamField>
 

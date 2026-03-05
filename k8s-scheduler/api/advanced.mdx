@@ -1,0 +1,517 @@
+---
+title: "Advanced APIs"
+description: "API keys, tasks, workflows, sandboxes, and MCP endpoints"
+---
+
+This page documents additional API endpoints for advanced features including API key management, task execution, workflow orchestration, sandboxes, and Model Context Protocol integration.
+
+## API Key Management
+
+Manage API keys for programmatic access to the platform.
+
+### List API Keys
+
+```http
+GET /api/api-keys
+```
+
+Returns all API keys for the authenticated user.
+
+**Response:**
+
+```json
+{
+  "apiKeys": [
+    {
+      "id": "key_123",
+      "name": "CI/CD Pipeline",
+      "prefix": "sk_live_",
+      "createdAt": "2024-01-15T10:30:00Z",
+      "lastUsedAt": "2024-01-20T14:22:00Z"
+    }
+  ]
+}
+```
+
+### Create API Key
+
+```http
+POST /api/api-keys
+```
+
+Creates a new API key.
+
+**Request:**
+
+```json
+{
+  "name": "CI/CD Pipeline",
+  "expiresInDays": 90
+}
+```
+
+**Response:**
+
+```json
+{
+  "apiKey": {
+    "id": "key_123",
+    "name": "CI/CD Pipeline",
+    "key": "sk_live_abc123...",
+    "createdAt": "2024-01-15T10:30:00Z"
+  }
+}
+```
+
+<Warning>
+The full API key is only returned once during creation. Store it securely.
+</Warning>
+
+### Revoke API Key
+
+```http
+DELETE /api/api-keys/{keyId}
+```
+
+Revokes an API key, making it immediately invalid.
+
+**Example:**
+
+```bash
+curl -X DELETE https://app.example.com/api/api-keys/key_123 \\
+  -H "Authorization: Bearer sk_live_abc123..."
+```
+
+## Task Execution
+
+Execute one-off tasks as Kubernetes Jobs.
+
+### List Tasks
+
+```http
+GET /api/tasks
+```
+
+Returns tasks for the current user.
+
+**Query Parameters:**
+
+<ParamField query="status" type="string">
+  Filter by status: `pending`, `running`, `completed`, `failed`
+</ParamField>
+
+<ParamField query="limit" type="integer" default="50">
+  Number of tasks to return
+</ParamField>
+
+**Response:**
+
+```json
+{
+  "tasks": [
+    {
+      "id": "task_123",
+      "name": "data-migration",
+      "status": "completed",
+      "image": "myapp/migrator:latest",
+      "exitCode": 0,
+      "startedAt": "2024-01-20T10:00:00Z",
+      "completedAt": "2024-01-20T10:05:30Z"
+    }
+  ]
+}
+```
+
+### Create Task
+
+```http
+POST /api/tasks
+```
+
+Creates and executes a new task.
+
+**Request:**
+
+```json
+{
+  "name": "data-migration",
+  "image": "myapp/migrator:latest",
+  "command": ["python", "migrate.py"],
+  "env": {
+    "DATABASE_URL": "postgres://..."
+  },
+  "timeout": "10m"
+}
+```
+
+**Response:**
+
+```json
+{
+  "task": {
+    "id": "task_123",
+    "name": "data-migration",
+    "status": "pending",
+    "createdAt": "2024-01-20T10:00:00Z"
+  }
+}
+```
+
+### Get Task Details
+
+```http
+GET /api/tasks/{taskId}
+```
+
+Returns detailed information about a specific task, including logs.
+
+**Response:**
+
+```json
+{
+  "task": {
+    "id": "task_123",
+    "name": "data-migration",
+    "status": "running",
+    "logs": "Starting migration...\\nProcessing 1000 records...\\n",
+    "startedAt": "2024-01-20T10:00:00Z"
+  }
+}
+```
+
+### Delete Task
+
+```http
+DELETE /api/tasks/{taskId}
+```
+
+Deletes a task and its associated Kubernetes Job.
+
+## Workflow Orchestration
+
+Execute multi-step workflows with dependencies and output passing.
+
+### List Workflows
+
+```http
+GET /api/workflows
+```
+
+Returns workflows for the current user.
+
+**Response:**
+
+```json
+{
+  "workflows": [
+    {
+      "id": "workflow_123",
+      "name": "build-test-deploy",
+      "status": "completed",
+      "steps": 3,
+      "completedSteps": 3,
+      "createdAt": "2024-01-20T10:00:00Z"
+    }
+  ]
+}
+```
+
+### Create Workflow
+
+```http
+POST /api/workflows
+```
+
+Creates and executes a new workflow.
+
+**Request:**
+
+```json
+{
+  "name": "build-test-deploy",
+  "steps": [
+    {
+      "name": "build",
+      "image": "docker:latest",
+      "command": ["docker", "build", "-t", "myapp", "."]
+    },
+    {
+      "name": "test",
+      "image": "myapp:latest",
+      "command": ["npm", "test"],
+      "dependsOn": ["build"]
+    },
+    {
+      "name": "deploy",
+      "image": "kubectl:latest",
+      "command": ["kubectl", "apply", "-f", "deploy.yaml"],
+      "dependsOn": ["test"]
+    }
+  ]
+}
+```
+
+**Response:**
+
+```json
+{
+  "workflow": {
+    "id": "workflow_123",
+    "name": "build-test-deploy",
+    "status": "pending",
+    "createdAt": "2024-01-20T10:00:00Z"
+  }
+}
+```
+
+### Get Workflow Status
+
+```http
+GET /api/workflows/{workflowId}
+```
+
+Returns workflow execution status and logs for each step.
+
+**Response:**
+
+```json
+{
+  "workflow": {
+    "id": "workflow_123",
+    "name": "build-test-deploy",
+    "status": "running",
+    "steps": [
+      {
+        "name": "build",
+        "status": "completed",
+        "exitCode": 0,
+        "output": "Successfully built image"
+      },
+      {
+        "name": "test",
+        "status": "running",
+        "logs": "Running tests...\\n"
+      },
+      {
+        "name": "deploy",
+        "status": "pending"
+      }
+    ]
+  }
+}
+```
+
+## Sandbox Management
+
+Create isolated development environments.
+
+### List Sandboxes
+
+```http
+GET /api/sandboxes
+```
+
+Returns all sandboxes for the current user.
+
+**Response:**
+
+```json
+{
+  "sandboxes": [
+    {
+      "id": "sandbox_123",
+      "name": "dev-env",
+      "status": "running",
+      "image": "ubuntu:22.04",
+      "url": "https://dev-env.sandboxes.example.com",
+      "createdAt": "2024-01-20T10:00:00Z"
+    }
+  ]
+}
+```
+
+### Create Sandbox
+
+```http
+POST /api/sandboxes
+```
+
+Creates a new isolated sandbox environment.
+
+**Request:**
+
+```json
+{
+  "name": "dev-env",
+  "image": "ubuntu:22.04",
+  "size": "medium",
+  "timeout": "2h"
+}
+```
+
+**Sizes:**
+
+<CardGroup cols={3}>
+  <Card title="small" icon="cube">
+    1 CPU, 2GB RAM
+  </Card>
+  <Card title="medium" icon="cubes">
+    2 CPU, 4GB RAM
+  </Card>
+  <Card title="large" icon="server">
+    4 CPU, 8GB RAM
+  </Card>
+</CardGroup>
+
+**Response:**
+
+```json
+{
+  "sandbox": {
+    "id": "sandbox_123",
+    "name": "dev-env",
+    "status": "provisioning",
+    "url": "https://dev-env.sandboxes.example.com",
+    "credentials": {
+      "password": "temp_abc123"
+    }
+  }
+}
+```
+
+### Get Sandbox Details
+
+```http
+GET /api/sandboxes/{sandboxId}
+```
+
+Returns sandbox details including status and access information.
+
+### Delete Sandbox
+
+```http
+DELETE /api/sandboxes/{sandboxId}
+```
+
+Terminates and deletes the sandbox environment.
+
+## Model Context Protocol (MCP)
+
+MCP endpoint for AI agent integration.
+
+### MCP Server
+
+```http
+POST /mcp
+```
+
+Implements the Model Context Protocol for AI agent interactions. This endpoint allows AI assistants to:
+
+- Query deployment status
+- Create and manage deployments
+- Access logs and metrics
+- Execute tasks and workflows
+
+**Authentication:**
+
+Use API keys or session cookies for authentication.
+
+**Example Request:**
+
+```json
+{
+  "method": "deployments/list",
+  "params": {
+    "status": "running"
+  }
+}
+```
+
+**Example Response:**
+
+```json
+{
+  "result": {
+    "deployments": [
+      {
+        "name": "my-app",
+        "status": "running",
+        "url": "https://my-app.example.com"
+      }
+    ]
+  }
+}
+```
+
+<Info>
+The MCP endpoint follows the [Model Context Protocol specification](https://modelcontextprotocol.io/) for structured AI-platform communication.
+</Info>
+
+## Authentication
+
+All endpoints require authentication via:
+
+1. **Session Cookie** - Set after OAuth login
+2. **API Key** - `Authorization: Bearer sk_live_...` header
+
+**Example with API Key:**
+
+```bash
+curl https://app.example.com/api/tasks \\
+  -H "Authorization: Bearer sk_live_abc123..."
+```
+
+## Rate Limits
+
+API endpoints are rate-limited per user:
+
+- **Authenticated requests**: 1000 requests/hour
+- **API key requests**: 5000 requests/hour
+
+Rate limit headers are included in responses:
+
+```
+X-RateLimit-Limit: 1000
+X-RateLimit-Remaining: 950
+X-RateLimit-Reset: 1705756800
+```
+
+## Error Responses
+
+All endpoints return consistent error responses:
+
+```json
+{
+  "error": "resource_not_found",
+  "message": "Task not found",
+  "status": 404
+}
+```
+
+**Common Error Codes:**
+
+| Code | Description |
+|------|-------------|
+| `400` | Bad request - invalid parameters |
+| `401` | Unauthorized - missing or invalid credentials |
+| `403` | Forbidden - insufficient permissions |
+| `404` | Not found - resource doesn't exist |
+| `429` | Too many requests - rate limit exceeded |
+| `500` | Internal server error |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="lock" href="/k8s-scheduler/api/authentication">
+    Learn about OAuth and API key authentication
+  </Card>
+  <Card title="Deployments API" icon="rocket" href="/k8s-scheduler/api/deployments">
+    Core deployment management endpoints
+  </Card>
+  <Card title="Configuration" icon="gear" href="/k8s-scheduler/configuration">
+    Configure API behavior with environment variables
+  </Card>
+  <Card title="Server Component" icon="server" href="/k8s-scheduler/server">
+    Understand the server architecture
+  </Card>
+</CardGroup>
