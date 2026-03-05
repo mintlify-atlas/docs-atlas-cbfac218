@@ -1,0 +1,140 @@
+{
+  "projectType": "infrastructure",
+  "projectName": "Shipyard",
+  "projectDescription": "Monorepo containing k8s-scheduler platform, Terraform modules, and infrastructure-as-code for AWS deployments",
+  "theme": "aspen",
+  "primaryColor": "#1E3A8A",
+  "lightColor": "#3B82F6",
+  "darkColor": "#1E293B",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Overview",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": ["introduction", "architecture", "quickstart"]
+          }
+        ]
+      },
+      {
+        "tab": "K8s Scheduler",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": ["k8s-scheduler/overview", "k8s-scheduler/quickstart", "k8s-scheduler/local-development"]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "k8s-scheduler/architecture",
+              "k8s-scheduler/multi-tenancy",
+              "k8s-scheduler/rbac",
+              "k8s-scheduler/secrets",
+              "k8s-scheduler/templates"
+            ]
+          },
+          {
+            "group": "Components",
+            "pages": [
+              "k8s-scheduler/frontend",
+              "k8s-scheduler/server",
+              "k8s-scheduler/operator"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "k8s-scheduler/deployment-guide",
+              "k8s-scheduler/configuration",
+              "k8s-scheduler/dependencies"
+            ]
+          },
+          {
+            "group": "API Reference",
+            "pages": [
+              "k8s-scheduler/api/authentication",
+              "k8s-scheduler/api/organizations",
+              "k8s-scheduler/api/deployments",
+              "k8s-scheduler/api/templates",
+              "k8s-scheduler/api/secrets"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Terraform Modules",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": ["terraform-modules/introduction", "terraform-modules/usage"]
+          },
+          {
+            "group": "Modules",
+            "pages": [
+              "terraform-modules/vpc",
+              "terraform-modules/eks",
+              "terraform-modules/rds",
+              "terraform-modules/vault",
+              "terraform-modules/ec2",
+              "terraform-modules/state"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Infrastructure",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": ["infrastructure/overview", "infrastructure/prerequisites"]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "infrastructure/bootstrap",
+              "infrastructure/infrastructure-layer",
+              "infrastructure/platform-layer",
+              "infrastructure/apps-layer"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "infrastructure/accessing-services",
+              "infrastructure/troubleshooting",
+              "infrastructure/destroying"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Multi-tenant Kubernetes deployment platform with RBAC",
+    "Reusable Terraform modules for AWS infrastructure",
+    "Three-tier infrastructure deployment (infrastructure, platform, apps)",
+    "HashiCorp Vault integration for secrets management",
+    "External Secrets Operator for K8s secret injection",
+    "OAuth authentication with Google",
+    "Stripe billing integration",
+    "React 19 frontend with TypeScript",
+    "Go backend with Kubernetes operator pattern",
+    "Tailscale VPN for secure cluster access"
+  ],
+  "publicApiSurface": [
+    "/api/deployments",
+    "/api/templates",
+    "/api/secrets",
+    "/api/orgs",
+    "/api/teams",
+    "/api/billing",
+    "/api/clients",
+    "/oauth/google",
+    "module \"vpc\"",
+    "module \"eks\"",
+    "module \"rds\"",
+    "module \"vault\"",
+    "UserDeployment CRD"
+  ]
+}
