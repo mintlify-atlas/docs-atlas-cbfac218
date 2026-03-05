@@ -1,0 +1,500 @@
+---
+title: "EC2 Module"
+description: "EC2 instances with Amazon Linux 2023, optional ALB, Tailscale, and HTTPS support"
+---
+
+## Overview
+
+The EC2 module creates Amazon EC2 instances running Amazon Linux 2023 with optional Application Load Balancer, automatic Tailscale installation, HTTPS support via ACM certificates, and CloudFlare DNS integration.
+
+## Features
+
+<CardGroup cols={2}>
+  <Card title="Amazon Linux 2023" icon="server">
+    Automatically uses the latest AL2023 AMI with security updates
+  </Card>
+  
+  <Card title="Optional Tailscale" icon="shield-halved">
+    Automatic Tailscale installation for secure remote access
+  </Card>
+  
+  <Card title="Optional ALB" icon="load-balancer">
+    Application Load Balancer with health checks and target groups
+  </Card>
+  
+  <Card title="HTTPS Support" icon="lock">
+    Automatic ACM certificate creation and CloudFlare DNS validation
+  </Card>
+  
+  <Card title="Multiple Instances" icon="cubes">
+    Create multiple instances with a single module call
+  </Card>
+  
+  <Card title="Security Hardening" icon="shield-check">
+    IMDSv2 enforcement, encrypted storage, and security groups
+  </Card>
+</CardGroup>
+
+## Architecture
+
+### Without ALB
+
+```
+┌─────────────┐
+│  Internet   │
+└──────┬───────┘
+       │
+   ┌───┴────┐
+   │  EIP   │ (optional)
+   └───┬────┘
+       │
+   ┌───┴───────────────────┐
+   │  EC2 Instance          │
+   │  - AL2023              │
+   │  - Tailscale           │
+   │  - Your App            │
+   └─────────────────────┘
+```
+
+### With ALB
+
+```
+┌─────────────┐
+│  Internet   │
+└──────┬───────┘
+       │
+   ┌───┴────────────────┐
+   │      ALB             │
+   │  HTTP/HTTPS          │
+   └───┬────────────────┘
+       │
+   ┌───┴────────────────┐
+   │ Target Group        │
+   └───┬────────────────┘
+       │
+   ┌───┴───────────────────┐
+   │  EC2 Instance          │
+   │  - AL2023              │
+   │  - Tailscale           │
+   │  - Your App            │
+   └─────────────────────┘
+```
+
+## Usage Examples
+
+### Basic EC2 Instance
+
+```hcl
+module "ec2" {
+  source = "git@github.com:opsnorth/terraform-modules.git//ec2?ref=v1.0.0"
+
+  name      = "my-app-server"
+  vpc_id    = module.vpc.vpc_id
+  subnet_id = module.vpc.public_subnet_ids[0]
+
+  instance_type = "t3.small"
+  key_name      = "my-keypair"
+
+  ingress_rules = [
+    {
+      description = "SSH from my IP"
+      from_port   = 22
+      to_port     = 22
+      protocol    = "tcp"
+      cidr_blocks = ["1.2.3.4/32"]
+    },
+    {
+      description = "HTTP from anywhere"
+      from_port   = 80
+      to_port     = 80
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  ]
+
+  tags = {
+    Environment = "production"
+    Application = "my-app"
+  }
+}
+```
+
+### Multiple Instances
+
+```hcl
+module "ec2_cluster" {
+  source = "git@github.com:opsnorth/terraform-modules.git//ec2?ref=v1.0.0"
+
+  name           = "app-server"
+  instance_count = 3  # Creates: app-server-1, app-server-2, app-server-3
+
+  vpc_id    = module.vpc.vpc_id
+  subnet_id = module.vpc.public_subnet_ids[0]
+
+  instance_type = "t3.small"
+  key_name      = "my-keypair"
+
+  # Allocate EIP for each instance
+  allocate_eip = true
+
+  ingress_rules = [
+    {
+      description = "SSH"
+      from_port   = 22
+      to_port     = 22
+      protocol    = "tcp"
+      cidr_blocks = ["10.0.0.0/16"]
+    }
+  ]
+
+  tags = {
+    Environment = "production"
+    Cluster     = "app-cluster"
+  }
+}
+
+# Access individual instance IPs
+output "instance_ips" {
+  value = module.ec2_cluster.public_ips
+}
+```
+
+### With Tailscale
+
+```hcl
+module "ec2_tailscale" {
+  source = "git@github.com:opsnorth/terraform-modules.git//ec2?ref=v1.0.0"
+
+  name      = "my-app-server"
+  vpc_id    = module.vpc.vpc_id
+  subnet_id = module.vpc.public_subnet_ids[0]
+
+  instance_type = "t3.small"
+  key_name      = "my-keypair"
+
+  # Enable Tailscale (requires manual authentication after boot)
+  enable_tailscale = true
+
+  ingress_rules = [
+    {
+      description = "SSH"
+      from_port   = 22
+      to_port     = 22
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    },
+    {
+      description = "Tailscale UDP"
+      from_port   = 41641
+      to_port     = 41641
+      protocol    = "udp"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  ]
+
+  tags = {
+    Environment = "production"
+  }
+}
+```
+
+<Info>
+After the instance boots, SSH to it and run `sudo tailscale up` to authenticate.
+</Info>
+
+### With Application Load Balancer
+
+```hcl
+module "ec2_with_alb" {
+  source = "git@github.com:opsnorth/terraform-modules.git//ec2?ref=v1.0.0"
+
+  name      = "my-web-app"
+  vpc_id    = module.vpc.vpc_id
+  subnet_id = module.vpc.private_subnet_ids[0]
+
+  instance_type = "t3.medium"
+  key_name      = "my-keypair"
+
+  # Enable ALB
+  enable_alb     = true
+  alb_subnet_ids = module.vpc.public_subnet_ids  # Must be in 2+ AZs
+
+  # Application configuration
+  application_port     = 8080
+  health_check_path    = "/health"
+  health_check_matcher = "200"
+
+  tags = {
+    Environment = "production"
+  }
+}
+```
+
+### With Custom Domain and HTTPS
+
+```hcl
+module "api_server" {
+  source = "git@github.com:opsnorth/terraform-modules.git//ec2?ref=v1.0.0"
+
+  name      = "api-server"
+  vpc_id    = module.vpc.vpc_id
+  subnet_id = module.vpc.private_subnet_ids[0]
+
+  instance_type = "t3.small"
+  key_name      = "my-keypair"
+
+  # Enable ALB with custom domain
+  enable_alb     = true
+  alb_subnet_ids = module.vpc.public_subnet_ids
+
+  # Automatic HTTPS with CloudFlare
+  domain_name          = "api.example.com"
+  cloudflare_zone_id   = "abc123xyz"
+  cloudflare_api_token = var.cloudflare_api_token
+
+  # Application configuration
+  application_port     = 8080
+  health_check_path    = "/health"
+  health_check_matcher = "200"
+
+  ingress_rules = [
+    {
+      description = "SSH from bastion"
+      from_port   = 22
+      to_port     = 22
+      protocol    = "tcp"
+      cidr_blocks = ["10.0.1.0/24"]
+    }
+  ]
+
+  tags = {
+    Environment = "production"
+  }
+}
+
+# Access via custom domain
+output "api_url" {
+  value = module.api_server.domain_url  # https://api.example.com
+}
+```
+
+<Tip>
+The module automatically creates ACM certificate, validates via CloudFlare DNS, and creates a DNS record pointing to the ALB.
+</Tip>
+
+## Inputs
+
+| Name | Description | Type | Default | Required |
+|------|-------------|------|---------|:--------:|
+| `name` | Name prefix for EC2 instances | `string` | n/a | yes |
+| `instance_count` | Number of EC2 instances to create | `number` | `1` | no |
+| `vpc_id` | VPC ID | `string` | n/a | yes |
+| `subnet_id` | Subnet ID for the instance(s) | `string` | n/a | yes |
+| `instance_type` | EC2 instance type | `string` | `"t3.micro"` | no |
+| `ami_id` | Custom AMI ID (leave empty for latest AL2023) | `string` | `""` | no |
+| `key_name` | EC2 key pair name | `string` | `""` | no |
+| `associate_public_ip` | Assign public IP | `bool` | `true` | no |
+| `root_volume_size` | Root volume size in GB | `number` | `20` | no |
+| `root_volume_type` | Root volume type | `string` | `"gp3"` | no |
+| `root_volume_encrypted` | Encrypt root volume | `bool` | `true` | no |
+| `enable_detailed_monitoring` | Enable detailed monitoring | `bool` | `false` | no |
+| `enable_termination_protection` | Enable termination protection | `bool` | `false` | no |
+| `iam_policy_arns` | Additional IAM policies | `list(string)` | `[]` | no |
+| `ingress_rules` | Ingress rules for EC2 security group | `list(object)` | SSH only | no |
+| `allocate_eip` | Allocate Elastic IP | `bool` | `false` | no |
+| `enable_tailscale` | Enable Tailscale installation | `bool` | `false` | no |
+| `enable_alb` | Enable Application Load Balancer | `bool` | `false` | no |
+| `alb_subnet_ids` | ALB subnet IDs (2+ AZs) | `list(string)` | `[]` | no |
+| `alb_internal` | Make ALB internal | `bool` | `false` | no |
+| `alb_certificate_arn` | ACM certificate ARN for HTTPS | `string` | `""` | no |
+| `application_port` | Application port on EC2 | `number` | `80` | no |
+| `health_check_path` | Health check path | `string` | `"/"` | no |
+| `health_check_matcher` | HTTP status codes for healthy | `string` | `"200"` | no |
+| `domain_name` | Domain name for ALB (enables auto HTTPS) | `string` | `""` | no |
+| `cloudflare_zone_id` | CloudFlare Zone ID | `string` | `""` | no |
+| `cloudflare_api_token` | CloudFlare API token | `string` | `""` | no |
+| `additional_user_data` | Additional setup commands | `string` | `""` | no |
+| `tags` | Resource tags | `map(string)` | `{}` | no |
+
+## Outputs
+
+| Name | Description |
+|------|-------------|
+| `instance_id` | EC2 instance ID(s) |
+| `instance_arn` | EC2 instance ARN(s) |
+| `private_ip` | Private IP address(es) |
+| `public_ip` | Public IP address(es) |
+| `ami_id` | AMI ID used |
+| `security_group_id` | Security group ID |
+| `iam_role_arn` | IAM role ARN |
+| `alb_dns_name` | ALB DNS name (if enabled) |
+| `alb_arn` | ALB ARN (if enabled) |
+| `target_group_arn` | Target group ARN (if enabled) |
+| `certificate_arn` | ACM certificate ARN (if domain configured) |
+| `domain_name` | Configured domain name |
+| `domain_url` | Full HTTPS URL (if domain configured) |
+| `certificate_status` | ACM certificate status |
+| `ssh_command` | SSH command to connect |
+| `http_endpoint` | HTTP/HTTPS endpoint URL |
+| `instance_summary` | Summary of configuration |
+
+## Security Group Configuration
+
+By default, only SSH (port 22) is allowed. Customize with `ingress_rules`:
+
+```hcl
+ingress_rules = [
+  {
+    description = "SSH from bastion"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.1.0/24"]
+  },
+  {
+    description = "HTTP from anywhere"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  },
+  {
+    description = "HTTPS from anywhere"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  },
+  {
+    description = "Custom UDP service"
+    from_port   = 8125
+    to_port     = 8125
+    protocol    = "udp"
+    cidr_blocks = ["10.0.0.0/16"]
+  }
+]
+```
+
+<Note>
+When ALB is enabled, the module automatically adds an ingress rule to allow traffic from the ALB to the application port.
+</Note>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use Latest AMI" icon="cloud-arrow-down">
+    Leave `ami_id` empty to automatically use the latest Amazon Linux 2023 AMI with security patches.
+  </Card>
+  
+  <Card title="Encrypt Storage" icon="lock">
+    Root volume encryption is enabled by default. Keep it enabled for compliance.
+  </Card>
+  
+  <Card title="Restrict SSH" icon="shield-halved">
+    Limit SSH access to specific IP ranges or use Tailscale for secure access.
+  </Card>
+  
+  <Card title="Use ALB for Production" icon="load-balancer">
+    ALB provides health checks, auto-recovery, and HTTPS termination.
+  </Card>
+  
+  <Card title="Enable Monitoring" icon="chart-line">
+    Use `enable_detailed_monitoring = true` for production workloads.
+  </Card>
+  
+  <Card title="Right-Size Instances" icon="gauge-high">
+    Start with smaller instances (t3.micro/small) and scale based on metrics.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Cannot SSH to Instance
+
+**Check security group:**
+```bash
+aws ec2 describe-security-groups --group-ids <security-group-id>
+```
+
+**Verify key pair:**
+```bash
+aws ec2 describe-key-pairs --key-names <key-name>
+```
+
+**Check instance status:**
+```bash
+aws ec2 describe-instance-status --instance-ids <instance-id>
+```
+
+### Tailscale Not Connecting
+
+**Check if installed:**
+```bash
+ssh ec2-user@<instance-ip>
+which tailscale
+sudo systemctl status tailscaled
+```
+
+**Authenticate:**
+```bash
+sudo tailscale up
+# Follow the authentication URL
+```
+
+**Check logs:**
+```bash
+sudo journalctl -u tailscaled -f
+```
+
+### ALB Health Checks Failing
+
+**Check application is running:**
+```bash
+ssh ec2-user@<instance-ip>
+curl localhost:<application_port>/<health_check_path>
+```
+
+**Verify target health:**
+```bash
+aws elbv2 describe-target-health \
+  --target-group-arn <target-group-arn>
+```
+
+**Check security group:**
+Ensure the EC2 security group allows traffic from the ALB security group on the application port.
+
+### Certificate Validation Stuck
+
+**Check ACM certificate status:**
+```bash
+aws acm describe-certificate --certificate-arn <certificate-arn>
+```
+
+**Verify CloudFlare DNS records:**
+- Check that CNAME validation records were created
+- DNS propagation can take 5-10 minutes
+
+**Common issues:**
+- CloudFlare API token missing DNS edit permissions
+- Zone ID incorrect
+- Domain already has conflicting records
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="VPC Module" icon="network-wired" href="/terraform-modules/vpc">
+    Create VPC and subnets for EC2
+  </Card>
+  
+  <Card title="Usage Guide" icon="book" href="/terraform-modules/usage">
+    Common patterns and best practices
+  </Card>
+  
+  <Card title="Infrastructure Guide" icon="book" href="/infrastructure/overview">
+    Complete deployment workflow
+  </Card>
+  
+  <Card title="EKS Module" icon="kubernetes" href="/terraform-modules/eks">
+    Deploy Kubernetes cluster alongside EC2
+  </Card>
+</CardGroup>

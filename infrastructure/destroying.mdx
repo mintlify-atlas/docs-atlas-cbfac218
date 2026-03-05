@@ -1,0 +1,457 @@
+---
+title: Destroying Resources
+description: How to safely tear down Shipyard infrastructure
+---
+
+When you need to tear down your infrastructure, it's crucial to destroy resources in the reverse order of deployment to avoid dependency issues and orphaned resources.
+
+<Warning>
+  **Data Loss Warning**: Destroying infrastructure will permanently delete all resources, including:
+  - Vault secrets and data
+  - ArgoCD applications and configurations  
+  - All Kubernetes workloads
+  - EKS cluster and nodes
+  - VPC and networking
+  
+  Ensure you have backups of any critical data before proceeding.
+</Warning>
+
+## Destruction Order
+
+Destroy layers in reverse order:
+
+```
+3-apps → 2-platform → 1-infrastructure → bootstrap
+```
+
+This order ensures:
+- Applications are removed before their underlying services
+- Platform components are removed before infrastructure
+- Infrastructure is removed before state backend
+
+## Pre-Destruction Checklist
+
+Before destroying resources:
+
+<Steps>
+  <Step title="Backup critical data">
+    ```bash
+    # Export Vault secrets
+    vault kv list -format=json secret/ > vault-secrets-backup.json
+    
+    # Export ArgoCD applications
+    kubectl get applications -n argocd -o yaml > argocd-apps-backup.yaml
+    
+    # Export important Kubernetes resources
+    kubectl get all --all-namespaces -o yaml > k8s-resources-backup.yaml
+    ```
+  </Step>
+
+  <Step title="Document current state">
+    Take note of:
+    - Terraform output values
+    - Custom configurations
+    - External integrations
+    - DNS records to clean up manually
+  </Step>
+
+  <Step title="Notify team members">
+    If working in a team, ensure no one else is using the infrastructure.
+  </Step>
+
+  <Step title="Set environment variables">
+    ```bash
+    # Source your environment
+    source .env
+    source ~/.vault-secrets/vault.env
+    ```
+  </Step>
+</Steps>
+
+## Step 1: Destroy Apps Layer
+
+Remove ArgoCD, Traefik, and application configurations.
+
+<Steps>
+  <Step title="Navigate to apps directory">
+    ```bash
+    cd terraform/dev/3-apps
+    ```
+  </Step>
+
+  <Step title="Review destruction plan">
+    ```bash
+    terraform plan -destroy
+    ```
+    
+    Review what will be destroyed. Verify these are the correct resources.
+  </Step>
+
+  <Step title="Destroy apps layer">
+    ```bash
+    terraform destroy
+    ```
+    
+    Type `yes` when prompted.
+    
+    This process takes approximately 5-10 minutes.
+  </Step>
+
+  <Step title="Verify destruction">
+    ```bash
+    # Check that ArgoCD namespace is gone
+    kubectl get namespace argocd
+    
+    # Should return: Error from server (NotFound)
+    ```
+  </Step>
+</Steps>
+
+<Info>
+  If `terraform destroy` fails due to lingering resources, see [Troubleshooting Destruction](#troubleshooting-destruction) below.
+</Info>
+
+## Step 2: Destroy Platform Layer
+
+Remove Kubernetes platform components including Vault.
+
+<Steps>
+  <Step title="Navigate to platform directory">
+    ```bash
+    cd terraform/dev/2-platform
+    ```
+  </Step>
+
+  <Step title="Review destruction plan">
+    ```bash
+    terraform plan -destroy
+    ```
+  </Step>
+
+  <Step title="Destroy platform layer">
+    ```bash
+    terraform destroy
+    ```
+    
+    Type `yes` when prompted.
+    
+    This process takes approximately 5-10 minutes.
+  </Step>
+
+  <Step title="Verify destruction">
+    ```bash
+    # Check that platform namespaces are gone
+    kubectl get namespace vault
+    kubectl get namespace cert-manager
+    kubectl get namespace external-secrets
+    ```
+  </Step>
+</Steps>
+
+## Step 3: Destroy Infrastructure Layer
+
+Remove EKS cluster, VPC, Tailscale, and Vault infrastructure.
+
+<Steps>
+  <Step title="Navigate to infrastructure directory">
+    ```bash
+    cd terraform/dev/1-infrastructure
+    ```
+  </Step>
+
+  <Step title="Review destruction plan">
+    ```bash
+    terraform plan -destroy
+    ```
+    
+    <Warning>
+      This will destroy:
+      - EKS cluster and all workloads
+      - VPC and networking
+      - Tailscale subnet router
+      - Vault KMS keys and DynamoDB tables
+    </Warning>
+  </Step>
+
+  <Step title="Set required environment variables">
+    ```bash
+    export TF_VAR_tailscale_auth_key="tskey-auth-xxxxx"
+    export TF_VAR_cloudflare_api_token="your-token"
+    ```
+    
+    <Note>
+      Environment variables are required even for destruction.
+    </Note>
+  </Step>
+
+  <Step title="Destroy infrastructure layer">
+    ```bash
+    terraform destroy
+    ```
+    
+    Type `yes` when prompted.
+    
+    This process takes approximately 15-20 minutes (EKS deletion is slowest).
+  </Step>
+
+  <Step title="Verify destruction">
+    ```bash
+    # Check that VPC is gone
+    aws ec2 describe-vpcs --filters Name=tag:Name,Values=dev-vpc
+    
+    # Should return empty list
+    ```
+  </Step>
+</Steps>
+
+## Step 4: Destroy Bootstrap (Optional)
+
+Remove the Terraform state backend. Only do this if you want to completely remove all infrastructure, including state history.
+
+<Warning>
+  **Permanent Deletion**: Destroying the bootstrap removes:
+  - All Terraform state files
+  - State lock table
+  - Historical records of infrastructure
+  
+  You will not be able to recover this data.
+</Warning>
+
+<Steps>
+  <Step title="Migrate state to local">
+    Before destroying the S3 backend, migrate state to local:
+    
+    ```bash
+    cd terraform/dev/bootstrap
+    
+    # Comment out the S3 backend in backend.tf
+    # Then run:
+    terraform init -migrate-state
+    ```
+  </Step>
+
+  <Step title="Empty S3 bucket">
+    S3 buckets with versioning must be emptied manually:
+    
+    ```bash
+    aws s3 rm s3://shipyard-terraform-state-dev --recursive
+    aws s3api delete-bucket --bucket shipyard-terraform-state-dev
+    ```
+  </Step>
+
+  <Step title="Destroy bootstrap">
+    ```bash
+    terraform destroy
+    ```
+    
+    Type `yes` when prompted.
+  </Step>
+</Steps>
+
+## Troubleshooting Destruction
+
+### Resources Fail to Destroy
+
+If `terraform destroy` fails with dependency errors:
+
+<AccordionGroup>
+  <Accordion title="ENI deletion errors">
+    Elastic Network Interfaces may be attached to resources:
+    
+    ```bash
+    # List ENIs in VPC
+    aws ec2 describe-network-interfaces \
+      --filters Name=vpc-id,Values=<vpc-id>
+    
+    # Delete manually if needed
+    aws ec2 delete-network-interface --network-interface-id <eni-id>
+    ```
+  </Accordion>
+
+  <Accordion title="Security group deletion errors">
+    Security groups may have dependencies:
+    
+    ```bash
+    # Find dependent resources
+    aws ec2 describe-security-groups --group-ids <sg-id>
+    
+    # Remove rules first
+    aws ec2 revoke-security-group-ingress --group-id <sg-id> --ip-permissions ...
+    ```
+  </Accordion>
+
+  <Accordion title="Subnet deletion errors">
+    Subnets may still have resources:
+    
+    ```bash
+    # List resources in subnet
+    aws ec2 describe-network-interfaces \
+      --filters Name=subnet-id,Values=<subnet-id>
+    
+    # Delete manually
+    ```
+  </Accordion>
+
+  <Accordion title="Load balancer not deleted">
+    ALBs created by Kubernetes may not be tracked by Terraform:
+    
+    ```bash
+    # List ALBs
+    aws elbv2 describe-load-balancers
+    
+    # Delete manually
+    aws elbv2 delete-load-balancer --load-balancer-arn <arn>
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Orphaned Kubernetes Resources
+
+If EKS destruction hangs due to Kubernetes resources:
+
+```bash
+# Delete all finalizers from stuck resources
+kubectl patch <resource-type> <resource-name> -n <namespace> \
+  -p '{"metadata":{"finalizers":[]}}' --type=merge
+
+# Force delete namespace
+kubectl delete namespace <namespace> --force --grace-period=0
+```
+
+### Terraform State Issues
+
+If state is corrupted or locked:
+
+```bash
+# Force unlock
+terraform force-unlock <lock-id>
+
+# Remove specific resource from state
+terraform state rm <resource-address>
+
+# Refresh state
+terraform refresh
+```
+
+## Manual Cleanup
+
+After Terraform destruction, manually clean up:
+
+### AWS Resources
+
+<AccordionGroup>
+  <Accordion title="CloudWatch Logs">
+    ```bash
+    # List log groups
+    aws logs describe-log-groups | grep dev-eks
+    
+    # Delete log groups
+    aws logs delete-log-group --log-group-name <name>
+    ```
+  </Accordion>
+
+  <Accordion title="ECR Images">
+    ```bash
+    # List repositories
+    aws ecr describe-repositories
+    
+    # Delete repository
+    aws ecr delete-repository --repository-name <name> --force
+    ```
+  </Accordion>
+
+  <Accordion title="EBS Snapshots">
+    ```bash
+    # List snapshots
+    aws ec2 describe-snapshots --owner-ids self
+    
+    # Delete snapshot
+    aws ec2 delete-snapshot --snapshot-id <snap-id>
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### DNS Records
+
+Remove DNS records from Cloudflare:
+
+```bash
+# List DNS records
+curl -X GET "https://api.cloudflare.com/client/v4/zones/<zone-id>/dns_records" \
+  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+
+# Delete record
+curl -X DELETE "https://api.cloudflare.com/client/v4/zones/<zone-id>/dns_records/<record-id>" \
+  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+```
+
+### Tailscale
+
+Remove subnet router from Tailscale:
+
+1. Go to [Tailscale Machines](https://login.tailscale.com/admin/machines)
+2. Find the subnet router device
+3. Click the three dots menu
+4. Select "Remove device"
+
+## Cost Verification
+
+After destruction, verify no resources are still incurring costs:
+
+```bash
+# Check for running EC2 instances
+aws ec2 describe-instances --filters Name=instance-state-name,Values=running
+
+# Check for load balancers
+aws elbv2 describe-load-balancers
+
+# Check for NAT gateways
+aws ec2 describe-nat-gateways --filter Name=state,Values=available
+
+# Check for EBS volumes
+aws ec2 describe-volumes --filters Name=status,Values=available
+```
+
+## Starting Fresh
+
+To redeploy infrastructure from scratch:
+
+<Steps>
+  <Step title="Ensure complete cleanup">
+    Verify all resources are destroyed using AWS Console or CLI.
+  </Step>
+
+  <Step title="Clear local Terraform state">
+    ```bash
+    rm -rf terraform/dev/*/.terraform
+    rm -rf terraform/dev/*/terraform.tfstate*
+    ```
+  </Step>
+
+  <Step title="Clear cached credentials">
+    ```bash
+    rm -rf ~/.vault-secrets
+    rm -rf ~/.kube/config
+    ```
+  </Step>
+
+  <Step title="Begin new deployment">
+    Start from the bootstrap step:
+    <Card title="Bootstrap" icon="rocket" href="/infrastructure/bootstrap">
+      Initialize Terraform state backend
+    </Card>
+  </Step>
+</Steps>
+
+## Getting Help
+
+If you encounter issues during destruction:
+
+- Check [Troubleshooting](/infrastructure/troubleshooting) guide
+- Review AWS CloudTrail for API errors
+- Check Terraform state: `terraform show`
+- Use `terraform state list` to see tracked resources
+
+<Warning>
+  Never manually delete the S3 state bucket or DynamoDB table before running `terraform destroy` on all layers.
+</Warning>

@@ -1,0 +1,440 @@
+---
+title: "Architecture Overview"
+description: "Understanding Shipyard's multi-tenant deployment platform architecture"
+---
+
+Shipyard is a Kubernetes-native multi-tenant deployment platform with a React frontend, OAuth authentication, RBAC, tiered subscriptions, and secrets management.
+
+## System Architecture
+
+The platform consists of three main components working together:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                                   CLIENTS                                        │
+│                              (Web Browser / API)                                 │
+└─────────────────────────────────────┬───────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              REACT SPA (ui/)                                     │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐ │
+│  │   React 19  │  │  React      │  │  TanStack   │  │     React Router 7      │ │
+│  │   + Vite    │  │  Hook Form  │  │   Query     │  │   (Client-side routing) │ │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────────────────┘ │
+│                                                                                  │
+│  ┌───────────────────────────────────────────────────────────────────────────┐  │
+│  │                              Pages                                         │  │
+│  │  Dashboard │ Teams │ Secrets │ Billing │ Templates │ Deployments         │  │
+│  └───────────────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────┬───────────────────────────────────────────┘
+                                      │ HTTP API
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              GO SERVER (cmd/server)                              │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐ │
+│  │   OAuth     │  │  Session    │  │   Auth      │  │      Embedded SPA       │ │
+│  │  (Google)   │  │   Store     │  │ Middleware  │  │    (go:embed ui/dist)   │ │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────────────────┘ │
+│                                                                                  │
+│  ┌───────────────────────────────────────────────────────────────────────────┐  │
+│  │                            REST API Handlers                               │  │
+│  │  /api/deployments  /api/secrets  /api/templates  /api/orgs  /api/teams    │  │
+│  │  /api/billing      /api/clients  /api/me         /api/invites             │  │
+│  └───────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                  │
+│  ┌───────────────────────────────────────────────────────────────────────────┐  │
+│  │                            Middleware Stack                                │  │
+│  │  Security Headers → Auth → RBAC (Authz) → Audit Logging → Handler         │  │
+│  └───────────────────────────────────────────────────────────────────────────┘  │
+└────────────┬─────────────────────┬─────────────────────┬────────────────────────┘
+             │                     │                     │
+             ▼                     ▼                     ▼
+┌────────────────────┐  ┌──────────────────┐  ┌─────────────────────────────────┐
+│    PostgreSQL      │  │  Vault/AWS       │  │        Kubernetes API           │
+│    (db.Store)      │  │ (secrets.Store)  │  │   (controller-runtime client)   │
+│                    │  │                  │  │                                 │
+│  - Users           │  │  - User secrets  │  │  Creates UserDeployment CRs     │
+│  - Organizations   │  │  - Template      │  │                                 │
+│  - Teams           │  │    secrets       │  └────────────────┬────────────────┘
+│  - Deployments     │  │  - Deployment    │                   │
+│  - Templates       │  │    secrets       │                   │
+│  - Billing Plans   │  │  - Per-service   │                   │
+│  - Clients         │  │    secrets       │                   │
+│  - Sessions        │  │                  │                   │
+└────────────────────┘  └──────────────────┘                   │
+                                                               ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                           OPERATOR (cmd/operator)                                │
+│                                                                                  │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │                    UserDeployment Controller                             │    │
+│  │                                                                          │    │
+│  │   Watches: UserDeployment CRs                                           │    │
+│  │   Creates: Deployments, Services, Ingresses, ConfigMaps,                │    │
+│  │            ExternalSecrets, NetworkPolicies                             │    │
+│  │   Features: Health probes, resource limits, observability               │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+└────────────────────────────────────┬────────────────────────────────────────────┘
+                                     │
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                         KUBERNETES RESOURCES                                     │
+│                                                                                  │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐ │
+│  │  Deployment  │  │   Service    │  │   Ingress    │  │   ExternalSecret     │ │
+│  │  (per svc)   │  │  (per svc)   │  │  (per svc)   │  │   (syncs from Vault) │ │
+│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────────────┘ │
+│                                                                                  │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────────────────────┐   │
+│  │  ConfigMap   │  │ K8s Secret   │  │         NetworkPolicy                │   │
+│  │  (user data) │  │ (from ESO)   │  │  (tier-based isolation)              │   │
+│  └──────────────┘  └──────────────┘  └──────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+## Core Components
+
+### 1. React Frontend
+
+Modern single-page application built with:
+
+- **React 19** with TypeScript
+- **Vite 7** for fast development and optimized builds
+- **TanStack Query 5** for server state management
+- **React Router 7** for client-side routing
+- **React Hook Form + Zod** for form validation
+- **Tailwind CSS 4** for styling
+- **Recharts** for metrics visualization
+
+**Key features:**
+- Dashboard with deployment cards
+- Team management (create, invite, manage members)
+- Secrets management (three-tier: user/template/deployment)
+- Template creation with YAML spec editor
+- Real-time deployment logs and metrics
+- Billing and subscription management
+
+**Location:** `k8s-scheduler/ui/`
+
+### 2. Go Server
+
+REST API backend serving both the API and embedded React application:
+
+- **OAuth Authentication**: Google OAuth2 flow
+- **Session Management**: Memory/PostgreSQL/Redis backends
+- **Embedded SPA**: React app served via `go:embed`
+- **RBAC Middleware**: Permission checks on all endpoints
+- **Template Management**: CRUD with visibility scopes
+- **Deployment Lifecycle**: Create/delete/monitor deployments
+- **Secrets Management**: Three-tier secrets architecture
+- **Billing Integration**: Stripe subscriptions and webhooks
+
+**Location:** `k8s-scheduler/cmd/server/`
+
+**Key API endpoints:**
+
+<CodeGroup>
+
+```bash Authentication
+# Initiate Google OAuth
+GET /oauth/google
+
+# OAuth callback
+GET /oauth/google/callback
+
+# End session
+POST /logout
+```
+
+```bash Deployments
+# List deployments
+GET /api/deployments
+
+# Create deployment
+POST /api/deployments
+
+# Get deployment details
+GET /api/deployments/{name}
+
+# Delete deployment
+DELETE /api/deployments/{name}
+
+# Stream logs
+GET /api/deployments/{name}/logs
+
+# Get metrics
+GET /api/deployments/{name}/metrics
+```
+
+```bash Organizations & Teams
+# List user's organizations
+GET /api/orgs
+
+# Get organization details
+GET /api/orgs/{id}
+
+# List teams in org
+GET /api/orgs/{id}/teams
+
+# Create team
+POST /api/orgs/{id}/teams
+
+# List team members
+GET /api/orgs/{id}/teams/{tid}/members
+
+# Invite member
+POST /api/orgs/{id}/teams/{tid}/invites
+```
+
+</CodeGroup>
+
+### 3. Kubernetes Operator
+
+Kubernetes operator built with controller-runtime:
+
+- **Watches**: `UserDeployment` custom resources
+- **Reconciles**: Creates/updates/deletes K8s resources
+- **Manages**: Deployments, Services, Ingresses, ConfigMaps, ExternalSecrets
+- **Features**: Health probes, resource limits, Prometheus metrics
+
+**Location:** `k8s-scheduler/cmd/operator/`
+
+**Custom Resource Definition:**
+
+```yaml k8s-scheduler/manifests/userdeployment-crd.yaml
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: userdeployments.scheduler.shipyard.sh
+spec:
+  group: scheduler.shipyard.sh
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+```
+
+## Data Flow
+
+Understanding how a deployment is created:
+
+<Steps>
+
+<Step title="User Action">
+User clicks **Create Deployment** in the React UI, fills out the form with template selection and configuration.
+</Step>
+
+<Step title="API Request">
+React app sends POST request to `/api/deployments` with deployment configuration.
+</Step>
+
+<Step title="Server Validation">
+Go server validates the request, checks RBAC permissions, and verifies the user has quota available for their subscription tier.
+</Step>
+
+<Step title="Create Custom Resource">
+Server creates a `UserDeployment` custom resource in Kubernetes:
+
+```go internal/server/server.go
+ud := &v1alpha1.UserDeployment{
+    ObjectMeta: metav1.ObjectMeta{
+        Name:      deployment.Name,
+        Namespace: fmt.Sprintf("sandbox-%s", userID),
+    },
+    Spec: v1alpha1.UserDeploymentSpec{
+        UserID:     userID,
+        Template:   deployment.Template,
+        Services:   deployment.Services,
+        // ...
+    },
+}
+kubeClient.Create(ctx, ud)
+```
+</Step>
+
+<Step title="Operator Watches">
+Operator's controller watches for new `UserDeployment` resources and triggers reconciliation loop.
+</Step>
+
+<Step title="Reconcile Loop">
+Operator creates all necessary Kubernetes resources:
+
+- **Deployments** (one per service in the template)
+- **Services** (for internal networking)
+- **Ingresses** (for external access)
+- **ExternalSecrets** (to sync secrets from Vault)
+- **ConfigMaps** (for user configuration)
+- **NetworkPolicies** (for tenant isolation)
+</Step>
+
+<Step title="Pods Running">
+Kubernetes schedules pods, pulls images, mounts secrets, and starts containers.
+</Step>
+
+<Step title="Status Updates">
+Operator updates the `UserDeployment` status field with pod health, URLs, and any errors. React UI polls for updates and displays deployment status.
+</Step>
+
+</Steps>
+
+## Multi-Tenancy Model
+
+Shipyard implements a hierarchical multi-tenancy model:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                           PLATFORM (Your Instance)                               │
+└─────────────────────────────────────┬───────────────────────────────────────────┘
+                                      │
+        ┌─────────────────────────────┼─────────────────────────────┐
+        ▼                             ▼                             ▼
+┌───────────────────┐       ┌───────────────────┐       ┌───────────────────┐
+│   Client A        │       │   Client B        │       │   Direct Org      │
+│   (White-label)   │       │   (White-label)   │       │   (No client)     │
+│   custom domain   │       │   custom domain   │       │                   │
+│   own branding    │       │   own branding    │       │                   │
+│   billing plans   │       │   billing plans   │       │                   │
+└─────────┬─────────┘       └─────────┬─────────┘       └─────────┬─────────┘
+          │                           │                           │
+    ┌─────┴─────┐               ┌─────┴─────┐                     │
+    ▼           ▼               ▼           ▼                     ▼
+┌───────┐   ┌───────┐       ┌───────┐   ┌───────┐           ┌───────────┐
+│ Org 1 │   │ Org 2 │       │ Org 3 │   │ Org 4 │           │   Org 5   │
+└───┬───┘   └───────┘       └───────┘   └───────┘           └─────┬─────┘
+    │                                                             │
+    ├── Team A (Backend)                                          ├── Team X
+    │   ├── dev@company.com (developer)                           └── Team Y
+    │   └── admin@company.com (team_admin)
+    │
+    └── Team B (Frontend)
+        └── designer@company.com (viewer)
+```
+
+### RBAC Hierarchy
+
+<Note>
+Every user action is validated against their role at the organization and team level.
+</Note>
+
+| Level | Roles | Permissions |
+|-------|-------|-------------|
+| **Organization** | `org_owner` | Full org control, billing, all teams |
+| | `org_admin` | Manage teams, templates, members |
+| | `org_member` | Access assigned teams only |
+| **Team** | `team_admin` | Manage team members, deployments, invites |
+| | `developer` | Create/manage deployments, view secrets |
+| | `viewer` | Read-only access to deployments |
+
+**Implementation:** `k8s-scheduler/internal/authz/authorizer.go`
+
+## Secrets Architecture
+
+Three-tier secrets system for flexible secret management:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        VAULT                                     │
+│                                                                  │
+│  users/{userId}/                                                 │
+│  ├── secrets/              # User-level (global) secrets         │
+│  ├── templates/{name}/     # Template secrets                    │
+│  │   └── services/{svc}/   # Per-service template secrets        │
+│  └── deployments/{name}/   # Deployment-specific secrets         │
+│      └── services/{svc}/   # Per-service deployment secrets      │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    EXTERNAL SECRETS OPERATOR                     │
+│                                                                  │
+│  ExternalSecret CR ──syncs──▶ K8s Secret                        │
+│  (references Vault path)      (mounted in pods)                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Secret Levels
+
+| Level | Path | Lifecycle | Use Case |
+|-------|------|-----------|----------|
+| User | `users/{id}/secrets` | Persistent | API keys shared across deployments |
+| Template | `users/{id}/templates/{name}` | Persistent | Template-specific config |
+| Service | `.../services/{svc}` | Persistent | Per-container secrets |
+| Deployment | `users/{id}/deployments/{name}` | Ephemeral | Deployment-specific overrides |
+
+**Implementation:** `k8s-scheduler/internal/secrets/vault.go`
+
+## Infrastructure Components
+
+Shipyard consists of three main repository components:
+
+### 1. k8s-scheduler
+
+Main application code (React frontend + Go backend + Kubernetes operator)
+
+**Tech stack:**
+- Go 1.24 with standard library HTTP server
+- PostgreSQL (pgx/v5) for data persistence
+- controller-runtime for Kubernetes operator
+- React 19 + Vite 7 + TailwindCSS 4
+
+### 2. terraform-modules
+
+Reusable Terraform modules for AWS infrastructure:
+
+- **VPC**: Virtual private cloud with public/private subnets
+- **EKS**: Amazon EKS cluster with managed node groups
+- **RDS**: PostgreSQL database
+- **Vault**: HashiCorp Vault infrastructure (KMS, DynamoDB)
+- **EC2**: Bastion hosts and utility instances
+- **State**: S3 + DynamoDB for Terraform state
+
+**Location:** `terraform-modules/`
+
+### 3. infra
+
+Environment-specific infrastructure deployments using the Terraform modules.
+
+**Three-layer architecture:**
+
+1. **Infrastructure Layer**: VPC, EKS, Tailscale VPN, Vault
+2. **Platform Layer**: ALB Controller, cert-manager, External Secrets Operator
+3. **Apps Layer**: ArgoCD, Traefik, application TLS certificates
+
+**Location:** `infra/terraform/dev/`
+
+## Subscription Tiers
+
+Feature availability varies by subscription tier:
+
+| Feature | Free | Business | Enterprise |
+|---------|------|----------|------------|
+| Deployments | 1 | 5 | Unlimited |
+| Team Members | 1 | 10 | Unlimited |
+| Templates | System only | + Custom | + Org-wide |
+| Network Isolation | Shared | Namespace | Dedicated |
+| Support | Community | Email | Dedicated |
+
+**Enforcement:** `k8s-scheduler/internal/tierlimits/`
+
+## Next Steps
+
+<CardGroup cols={2}>
+
+<Card title="Quick Start" icon="rocket" href="/quickstart">
+  Get Shipyard running locally in minutes
+</Card>
+
+<Card title="K8s Scheduler" icon="ship" href="/k8s-scheduler/overview">
+  Multi-tenant deployment platform
+</Card>
+
+<Card title="Terraform Modules" icon="cube" href="/terraform-modules/introduction">
+  Reusable infrastructure modules
+</Card>
+
+<Card title="Infrastructure Guide" icon="cloud" href="/infrastructure/overview">
+  Deploy the full stack on AWS
+</Card>
+
+</CardGroup>

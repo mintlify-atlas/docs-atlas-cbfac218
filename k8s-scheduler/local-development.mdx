@@ -1,0 +1,624 @@
+---
+title: "Local Development"
+description: "Detailed guide for setting up and iterating on k8s-scheduler locally with kind"
+---
+
+## Overview
+
+This guide covers the full local development workflow for k8s-scheduler using [kind](https://kind.sigs.k8s.io/) (Kubernetes IN Docker). You'll learn how to:
+
+- Set up a complete local environment with all dependencies
+- Iterate on Go and React code with fast rebuild cycles
+- Debug the server and operator with logs
+- Test multi-service deployments locally
+- Work without cloud dependencies (no AWS, Vault, or DNS required)
+
+<Note>
+Local development uses simplified configuration to avoid external dependencies. For production deployment, see the [Production Deployment Guide](https://github.com/opsnorth/k8s-scheduler/blob/main/docs/DEPLOYMENT_GUIDE.md).
+</Note>
+
+## Prerequisites
+
+Install these tools before proceeding:
+
+### Required
+
+- **Docker** (Docker Desktop or equivalent)
+  - macOS: [Docker Desktop for Mac](https://docs.docker.com/desktop/install/mac-install/)
+  - Linux: [Docker Engine](https://docs.docker.com/engine/install/)
+  - Windows: [Docker Desktop for Windows](https://docs.docker.com/desktop/install/windows-install/)
+
+- **kind** (Kubernetes IN Docker)
+  ```bash
+  brew install kind  # macOS
+  # Or follow https://kind.sigs.k8s.io/docs/user/quick-start/#installation
+  ```
+
+- **kubectl** (Kubernetes CLI)
+  ```bash
+  brew install kubectl  # macOS
+  # Or follow https://kubernetes.io/docs/tasks/tools/
+  ```
+
+- **Helm** (Kubernetes package manager)
+  ```bash
+  brew install helm  # macOS
+  # Or follow https://helm.sh/docs/intro/install/
+  ```
+
+### Optional (for UI development)
+
+- **Node.js 20+** and **npm** (for running the React dev server)
+  ```bash
+  brew install node  # macOS
+  # Or follow https://nodejs.org/
+  ```
+
+- **Go 1.24+** (for running the Go server directly)
+  ```bash
+  brew install go  # macOS
+  # Or follow https://go.dev/doc/install
+  ```
+
+<Info>
+You don't need Node.js or Go if you're just running the full stack in Docker via `make dev-local`. They're only needed for local iteration outside of Kubernetes.
+</Info>
+
+## Quick Start
+
+Clone the repository and start the local environment:
+
+```bash
+git clone https://github.com/opsnorth/k8s-scheduler.git
+cd k8s-scheduler
+
+# Start everything
+make dev-local
+```
+
+Wait for the setup script to complete (1-2 minutes), then access the platform:
+
+```bash
+open http://localhost:8081
+```
+
+You'll be auto-logged in as `dev@localhost`.
+
+## What `make dev-local` Does
+
+The setup script (`scripts/dev-setup.sh`) performs these steps:
+
+<Steps>
+  <Step title="Create kind cluster">
+    Creates a cluster named `k8s-scheduler-dev` with custom configuration:
+    
+    ```yaml
+    apiVersion: kind.x-k8s.io/v1alpha4
+    kind: Cluster
+    nodes:
+    - role: control-plane
+      extraPortMappings:
+      - containerPort: 30080  # Traefik HTTP
+        hostPort: 8080
+      - containerPort: 30081  # Server HTTP
+        hostPort: 8081
+    ```
+    
+    This maps `localhost:8080` → Traefik and `localhost:8081` → Server.
+  </Step>
+  
+  <Step title="Install PostgreSQL">
+    Deploys PostgreSQL 15 via Helm chart to the `postgres` namespace:
+    
+    ```bash
+    helm install postgres bitnami/postgresql \
+      -n postgres --create-namespace \
+      --set auth.username=k8s_scheduler \
+      --set auth.password=localdev \
+      --set auth.database=k8s_scheduler
+    ```
+    
+    Database is accessible at `postgres-postgresql.postgres.svc.cluster.local:5432`.
+  </Step>
+  
+  <Step title="Install Traefik">
+    Deploys Traefik ingress controller to the `traefik` namespace:
+    
+    ```bash
+    helm install traefik traefik/traefik \
+      -n traefik --create-namespace \
+      --set ports.web.nodePort=30080
+    ```
+    
+    Traefik routes `*.localhost` requests to the appropriate services.
+  </Step>
+  
+  <Step title="Build Docker images">
+    Builds two images:
+    
+    - `k8s-scheduler-server:dev` (Go server + embedded React UI)
+    - `k8s-scheduler-operator:dev` (Kubernetes operator)
+    
+    Uses `Dockerfile.server` and `Dockerfile.operator`.
+  </Step>
+  
+  <Step title="Load images into kind">
+    Transfers images from Docker to the kind cluster:
+    
+    ```bash
+    kind load docker-image k8s-scheduler-server:dev --name k8s-scheduler-dev
+    kind load docker-image k8s-scheduler-operator:dev --name k8s-scheduler-dev
+    ```
+  </Step>
+  
+  <Step title="Apply dev manifests">
+    Deploys the application using Kustomize overlay:
+    
+    ```bash
+    kubectl apply -k deploy/dev/
+    ```
+    
+    This creates:
+    - `scheduler-system` namespace
+    - `UserDeployment` CRD
+    - Server Deployment, Service, ConfigMap
+    - Operator Deployment, ServiceAccount, RBAC
+    - Dev-specific config patches
+  </Step>
+  
+  <Step title="Wait for pods">
+    Polls until all pods are ready:
+    
+    ```bash
+    kubectl wait --for=condition=ready pod -l app=k8s-scheduler-server -n scheduler-system --timeout=120s
+    kubectl wait --for=condition=ready pod -l app=k8s-scheduler-operator -n scheduler-system --timeout=120s
+    ```
+  </Step>
+</Steps>
+
+## Development Workflows
+
+### Workflow 1: Full Stack in Kubernetes (Recommended)
+
+Make changes to Go or React code, then rebuild and reload:
+
+```bash
+make dev-reload
+```
+
+This rebuilds images, loads them into kind, and restarts deployments. Changes are live in ~30 seconds.
+
+**Use this workflow when:**
+- Testing operator logic (requires Kubernetes)
+- Testing full integration (server + operator + CRDs)
+- Verifying deployment creation end-to-end
+
+### Workflow 2: React Dev Server + Go Binary (Fastest Iteration)
+
+For rapid UI development, run the React dev server locally:
+
+**Terminal 1: Start Go server**
+```bash
+export DEV_MODE=true
+export DATABASE_DSN="postgresql://k8s_scheduler:localdev@localhost:5432/k8s_scheduler?sslmode=disable"
+export KUBERNETES_ENABLED=false
+make dev-api
+```
+
+**Terminal 2: Start React dev server**
+```bash
+make dev-ui
+```
+
+Now visit http://localhost:5173 (Vite dev server). The React app proxies API requests to `http://localhost:8081`.
+
+**Use this workflow when:**
+- Iterating on React components
+- Testing API endpoints without Kubernetes
+- Fast hot-reload of UI changes (Vite HMR)
+
+<Warning>
+This workflow requires port-forwarding the PostgreSQL service from kind:
+
+```bash
+kubectl port-forward -n postgres svc/postgres-postgresql 5432:5432
+```
+
+Or use a local PostgreSQL instance.
+</Warning>
+
+### Workflow 3: Operator Only (For Controller Logic)
+
+Run the operator locally against a remote cluster:
+
+```bash
+export KUBECONFIG=~/.kube/config  # Or path to kind kubeconfig
+export DEPLOYMENT_DOMAIN=localhost
+export DISABLE_NETWORK_POLICIES=true
+go run ./cmd/operator
+```
+
+Now create test `UserDeployment` CRs:
+
+```bash
+kubectl apply -f - <<EOF
+apiVersion: scheduler.opsnorth.io/v1alpha1
+kind: UserDeployment
+metadata:
+  name: test-nginx
+  namespace: scheduler-system
+spec:
+  userId: "test-user-123"
+  template: "nginx"
+  tier: "free"
+  desiredState: "running"
+EOF
+```
+
+Watch the operator logs for reconciliation events.
+
+**Use this workflow when:**
+- Debugging operator reconciliation logic
+- Testing CRD changes
+- Iterating on controller code without rebuilding images
+
+## Accessing Deployments
+
+When you create a deployment through the UI, the operator creates a **Traefik IngressRoute**. Access deployments at:
+
+```
+http://<deployment-name>.localhost:8080
+```
+
+For example:
+
+```bash
+# Create a deployment named "my-app" with the nginx template
+curl http://my-app.localhost:8080
+```
+
+<Info>
+The `.localhost` domain is a special reserved domain that doesn't require DNS resolution. Your browser and `curl` will route it to `127.0.0.1` automatically.
+</Info>
+
+### How Routing Works
+
+1. Request to `my-app.localhost:8080` hits Traefik on port 8080
+2. Traefik inspects the `Host: my-app.localhost` header
+3. Matches the IngressRoute rule: `Host(\`my-app.localhost\`)`
+4. Routes traffic to the Service for `my-app`
+5. Service load-balances to the Pods
+
+No DNS or TLS required in local dev.
+
+## Viewing Logs
+
+### Server Logs
+
+The server logs OAuth events, API requests, and database queries:
+
+```bash
+kubectl logs -n scheduler-system deployment/k8s-scheduler-server -f
+```
+
+Expected log lines:
+
+```
+INFO Server starting addr=:8081
+INFO Dev mode enabled — auto-login as dev@localhost
+INFO Database migration complete version=12
+INFO Session backend initialized backend=memory
+INFO Secrets backend initialized backend=database
+```
+
+### Operator Logs
+
+The operator logs reconciliation events, K8s resource creation, and errors:
+
+```bash
+kubectl logs -n scheduler-system deployment/k8s-scheduler-operator -f
+```
+
+Expected log lines:
+
+```
+INFO Starting controller controller=UserDeployment
+INFO Reconciling UserDeployment name=test-deployment namespace=scheduler-system
+INFO Created Deployment name=test-deployment-service1 namespace=sandbox-123
+INFO Created Service name=test-deployment-service1 namespace=sandbox-123
+INFO Created IngressRoute name=test-deployment-service1 namespace=sandbox-123
+INFO Reconciliation complete status=Running
+```
+
+### Deployment Logs (User Apps)
+
+View logs for a specific deployment's pods:
+
+```bash
+# List all pods in the user's namespace
+kubectl get pods -n sandbox-<userId>
+
+# Tail logs for a specific pod
+kubectl logs -n sandbox-<userId> <pod-name> -f
+```
+
+Or use the **UI logs viewer** at `/deployments/<name>/logs`.
+
+## Configuration (Dev Mode)
+
+Dev mode configuration is applied via Kustomize patches in `deploy/dev/`.
+
+### ConfigMap Patch (`deploy/dev/configmap-patch.yaml`)
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k8s-scheduler-config
+  namespace: scheduler-system
+data:
+  DEV_MODE: "true"                    # Skip OAuth, auto-login
+  REACT_UI: "true"                    # Serve embedded React
+  SESSION_BACKEND: "memory"           # No Redis needed
+  SECRETS_BACKEND: "database"         # No Vault needed
+  BILLING_ENABLED: "false"            # No Stripe needed
+  KUBERNETES_ENABLED: "true"          # Enable K8s integration
+  DEPLOYMENT_DOMAIN: "localhost"      # Use *.localhost for ingress
+  COOKIE_SECURE: "false"              # No TLS in dev
+```
+
+### Operator ConfigMap
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k8s-scheduler-operator-config
+  namespace: scheduler-system
+data:
+  DEPLOYMENT_DOMAIN: "localhost"
+  DISABLE_NETWORK_POLICIES: "true"    # Skip NetworkPolicy creation
+  CLUSTER_SECRET_STORE: ""            # No ExternalSecrets in dev
+```
+
+<Warning>
+Never set `DEV_MODE=true` in production. It disables OAuth and creates an admin user with no authentication.
+</Warning>
+
+## Testing Multi-Service Deployments
+
+The LibreChat template is a good test case for multi-service deployments:
+
+```yaml
+# templates/librechat.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: template-librechat
+  namespace: scheduler-system
+data:
+  spec: |
+    displayName: LibreChat
+    description: Self-hosted AI chat platform
+    category: AI & ML
+    visibility: org
+    
+    services:
+      - name: librechat
+        image: ghcr.io/danny-avila/librechat:latest
+        containerPort: 3080
+        hasConfigMap: true
+        hasSecrets: true
+      
+      - name: mongodb
+        image: mongo:6
+        containerPort: 27017
+      
+      - name: redis
+        image: redis:7-alpine
+        containerPort: 6379
+    
+    ingress:
+      service: librechat
+      port: 3080
+```
+
+Create this deployment via the UI or API, then verify all services are created:
+
+```bash
+# List all resources in the user's namespace
+kubectl get all -n sandbox-<userId>
+
+# Should show:
+# - deployment/librechat-librechat
+# - deployment/librechat-mongodb
+# - deployment/librechat-redis
+# - service/librechat-librechat
+# - service/librechat-mongodb
+# - service/librechat-redis
+# - ingressroute/librechat
+```
+
+Access LibreChat at `http://librechat.localhost:8080`.
+
+## Database Access
+
+Connect to PostgreSQL for debugging:
+
+```bash
+kubectl port-forward -n postgres svc/postgres-postgresql 5432:5432
+```
+
+Then in another terminal:
+
+```bash
+psql postgresql://k8s_scheduler:localdev@localhost:5432/k8s_scheduler
+```
+
+Useful queries:
+
+```sql
+-- List all users
+SELECT id, email, name, created_at FROM users;
+
+-- List all organizations
+SELECT id, name, created_at FROM organizations;
+
+-- List all teams
+SELECT t.id, t.name, o.name AS org_name 
+FROM teams t 
+JOIN organizations o ON t.organization_id = o.id;
+
+-- List all deployments
+SELECT id, name, template, tier, status, user_id 
+FROM deployments 
+ORDER BY created_at DESC;
+
+-- Check user roles
+SELECT u.email, tm.role, t.name AS team_name
+FROM team_members tm
+JOIN users u ON tm.user_id = u.id
+JOIN teams t ON tm.team_id = t.id;
+```
+
+## Debugging Tips
+
+### Enable Verbose Logging
+
+Edit the server deployment to add `LOG_LEVEL=debug`:
+
+```bash
+kubectl set env deployment/k8s-scheduler-server -n scheduler-system LOG_LEVEL=debug
+```
+
+Or edit the ConfigMap and run `make dev-reload`.
+
+### Inspect CRDs
+
+View the UserDeployment CRD definition:
+
+```bash
+kubectl get crd userdeployments.scheduler.opsnorth.io -o yaml
+```
+
+List all UserDeployments:
+
+```bash
+kubectl get userdeployments -A
+```
+
+Describe a specific UserDeployment:
+
+```bash
+kubectl describe userdeployment <name> -n scheduler-system
+```
+
+### Port Forwarding
+
+Access services directly without going through Traefik:
+
+```bash
+# Forward server port
+kubectl port-forward -n scheduler-system svc/k8s-scheduler-server 8081:8081
+
+# Forward a user deployment
+kubectl port-forward -n sandbox-<userId> svc/<deployment-name> 8080:80
+```
+
+### Reset Database
+
+To start fresh without recreating the cluster:
+
+```bash
+# Delete all deployments
+kubectl delete userdeployments --all -n scheduler-system
+
+# Drop and recreate database (from inside PostgreSQL pod)
+kubectl exec -it -n postgres postgres-postgresql-0 -- psql -U k8s_scheduler -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+
+# Restart server to re-run migrations
+kubectl rollout restart deployment/k8s-scheduler-server -n scheduler-system
+```
+
+## Teardown
+
+Delete the entire kind cluster:
+
+```bash
+make dev-local-down
+```
+
+This runs `scripts/dev-teardown.sh`, which executes:
+
+```bash
+kind delete cluster --name k8s-scheduler-dev
+```
+
+<Warning>
+All data is lost when you delete the cluster. Deployments, database records, and secrets are not persisted.
+</Warning>
+
+## Troubleshooting
+
+### Server pod in CrashLoopBackOff
+
+**Symptom**: `kubectl get pods -n scheduler-system` shows `CrashLoopBackOff`
+
+**Cause**: Usually database connection failure
+
+**Fix**:
+1. Check PostgreSQL is running: `kubectl get pods -n postgres`
+2. If PostgreSQL is pending, wait for it to start
+3. Check server logs: `kubectl logs -n scheduler-system deployment/k8s-scheduler-server`
+4. Verify DATABASE_DSN in ConfigMap: `kubectl get cm k8s-scheduler-config -n scheduler-system -o yaml`
+
+### Deployment not accessible at *.localhost:8080
+
+**Symptom**: `curl http://my-app.localhost:8080` fails
+
+**Cause**: Traefik not running or IngressRoute not created
+
+**Fix**:
+1. Check Traefik: `kubectl get pods -n traefik`
+2. Check IngressRoute: `kubectl get ingressroutes -A`
+3. If missing, check operator logs for errors
+4. Verify the deployment status: `kubectl get userdeployment <name> -n scheduler-system -o yaml`
+
+### Cannot create deployments — tier limit exceeded
+
+**Symptom**: UI shows "You have reached the maximum deployments for your tier"
+
+**Cause**: Dev mode creates a user with `free` tier (limit: 1 deployment)
+
+**Fix**: Update the user's tier in the database:
+```sql
+UPDATE users SET tier = 'enterprise' WHERE email = 'dev@localhost';
+```
+
+Or restart the server to re-create the dev user.
+
+### Port 8081 or 8080 already in use
+
+**Symptom**: `make dev-local` fails with "port already allocated"
+
+**Cause**: Another process is using the port
+
+**Fix**:
+```bash
+# Find the process
+lsof -i :8081
+lsof -i :8080
+
+# Kill it or change ports in deploy/dev/kind-config.yaml
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Production Deployment" icon="server" href="https://github.com/opsnorth/k8s-scheduler/blob/main/docs/DEPLOYMENT_GUIDE.md">
+    Deploy k8s-scheduler to a production Kubernetes cluster
+  </Card>
+  <Card title="API Reference" icon="code" href="/k8s-scheduler/overview">
+    Explore the REST API endpoints and authentication
+  </Card>
+</CardGroup>

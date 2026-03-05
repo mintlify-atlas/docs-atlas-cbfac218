@@ -1,0 +1,472 @@
+---
+title: "Role-Based Access Control (RBAC)"
+description: "Hierarchical permission system with organization, team, and user-level roles"
+---
+
+## Overview
+
+The K8s Scheduler implements a comprehensive RBAC (Role-Based Access Control) system with two hierarchical levels: **Organization** and **Team**. Each level has distinct roles with specific permissions.
+
+## RBAC Hierarchy
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      ORGANIZATION                            │
+│                                                              │
+│  Roles:                                                      │
+│  ├── org_owner      (Full control)                          │
+│  ├── org_admin      (Manage teams, templates, members)      │
+│  └── org_member     (Access assigned teams only)            │
+│                                                              │
+│  ┌────────────────────────────────────────────────────┐    │
+│  │                    TEAM A                           │    │
+│  │                                                     │    │
+│  │  Roles:                                             │    │
+│  │  ├── team_admin  (Manage members, deployments)     │    │
+│  │  ├── developer   (Create/manage deployments)       │    │
+│  │  └── viewer      (Read-only access)                │    │
+│  └────────────────────────────────────────────────────┘    │
+│                                                              │
+│  ┌────────────────────────────────────────────────────┐    │
+│  │                    TEAM B                           │    │
+│  │  [Same role structure]                              │    │
+│  └────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Organization Roles
+
+### org_owner
+
+The organization owner has complete control over the organization.
+
+**Permissions:**
+- ✅ Full organization management
+- ✅ Create, update, delete teams
+- ✅ Manage all team members across all teams
+- ✅ View and manage billing and subscriptions
+- ✅ Create organization-wide templates
+- ✅ Delete the organization
+- ✅ All permissions of org_admin and org_member
+
+**Automatic Assignment:**
+- The user who creates the organization automatically becomes the owner
+- Only one owner per organization
+- Ownership can be transferred to another user
+
+<Warning>
+The org_owner role has destructive permissions. Consider using org_admin for day-to-day operations.
+</Warning>
+
+### org_admin
+
+Administrators can manage teams and members without full ownership.
+
+**Permissions:**
+- ✅ Create and manage teams
+- ✅ Add/remove members from teams
+- ✅ Assign team roles
+- ✅ Create organization-level templates
+- ✅ View organization details
+- ❌ Cannot delete the organization
+- ❌ Cannot manage billing
+- ❌ Cannot transfer ownership
+
+**Use Cases:**
+- Team leads who need to manage multiple teams
+- Platform administrators
+- HR personnel managing team memberships
+
+### org_member
+
+Basic organization membership with access to assigned teams only.
+
+**Permissions:**
+- ✅ View organization details
+- ✅ Access teams they are explicitly added to
+- ✅ View team-level resources based on team role
+- ❌ Cannot create teams
+- ❌ Cannot see teams they're not a member of
+- ❌ Cannot manage organization settings
+
+<Info>
+Most users will have the org_member role at the organization level, with specific team roles defining their actual permissions.
+</Info>
+
+## Team Roles
+
+### team_admin
+
+Team administrators manage team members and resources.
+
+**Permissions:**
+- ✅ Invite and remove team members
+- ✅ Change member roles within the team
+- ✅ Create, update, delete deployments
+- ✅ Create team-level templates
+- ✅ Manage team secrets
+- ✅ View deployment logs and metrics
+- ❌ Cannot delete the team (requires org_admin or org_owner)
+
+**Use Cases:**
+- Project managers
+- Senior developers leading a project
+- DevOps team leads
+
+### developer
+
+Developers can create and manage deployments.
+
+**Permissions:**
+- ✅ Create deployments from templates
+- ✅ Update and delete their own deployments
+- ✅ View all team deployments
+- ✅ Create deployment-specific secrets
+- ✅ View deployment logs and metrics
+- ✅ Create private templates
+- ❌ Cannot manage team members
+- ❌ Cannot create team-level templates
+
+**Use Cases:**
+- Application developers
+- DevOps engineers
+- QA engineers who need to deploy test environments
+
+### viewer
+
+Read-only access to team resources.
+
+**Permissions:**
+- ✅ View team deployments
+- ✅ View deployment status and details
+- ✅ View templates
+- ❌ Cannot create or modify deployments
+- ❌ Cannot view secrets (sensitive data)
+- ❌ Cannot view logs (may contain sensitive info)
+- ❌ Cannot manage team members
+
+**Use Cases:**
+- Product managers
+- Stakeholders who need visibility
+- Junior team members in training
+- Auditors
+
+## Permission Matrix
+
+### Organization Level
+
+| Action | org_owner | org_admin | org_member |
+|--------|-----------|-----------|------------|
+| View organization | ✅ | ✅ | ✅ |
+| Update organization details | ✅ | ✅ | ❌ |
+| Delete organization | ✅ | ❌ | ❌ |
+| Manage billing | ✅ | ❌ | ❌ |
+| Create teams | ✅ | ✅ | ❌ |
+| Delete teams | ✅ | ✅ | ❌ |
+| View all teams | ✅ | ✅ | ❌ |
+| Add org members | ✅ | ✅ | ❌ |
+| Remove org members | ✅ | ✅ | ❌ |
+| Create org templates | ✅ | ✅ | ❌ |
+| Transfer ownership | ✅ | ❌ | ❌ |
+
+### Team Level
+
+| Action | team_admin | developer | viewer |
+|--------|------------|-----------|--------|
+| View team details | ✅ | ✅ | ✅ |
+| View deployments | ✅ | ✅ | ✅ |
+| Create deployments | ✅ | ✅ | ❌ |
+| Update deployments | ✅ | ✅ (own) | ❌ |
+| Delete deployments | ✅ | ✅ (own) | ❌ |
+| View logs | ✅ | ✅ | ❌ |
+| View metrics | ✅ | ✅ | ✅ |
+| Manage secrets | ✅ | ✅ (own) | ❌ |
+| View templates | ✅ | ✅ | ✅ |
+| Create team templates | ✅ | ❌ | ❌ |
+| Invite members | ✅ | ❌ | ❌ |
+| Remove members | ✅ | ❌ | ❌ |
+| Change member roles | ✅ | ❌ | ❌ |
+
+<Note>
+"(own)" indicates the user can only perform the action on resources they created.
+</Note>
+
+## Authorization Flow
+
+The authorization system uses a middleware-based approach:
+
+```
+┌─────────────┐     ┌──────────────┐     ┌─────────────┐     ┌──────────┐
+│   Request   │────▶│ Auth Check   │────▶│ RBAC Check  │────▶│ Handler  │
+│             │     │ (middleware) │     │ (authz)     │     │          │
+└─────────────┘     └──────────────┘     └─────────────┘     └──────────┘
+                           │                     │
+                           │                     │
+                           ▼                     ▼
+                    ┌─────────────┐      ┌──────────────┐
+                    │  Session    │      │  Permission  │
+                    │  Valid?     │      │  Granted?    │
+                    └─────────────┘      └──────────────┘
+```
+
+### Implementation
+
+```go
+// internal/middleware/authz.go
+
+func (s *Server) RequirePermission(resource, action string) func(http.Handler) http.Handler {
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            user := GetUserFromContext(r.Context())
+            if user == nil {
+                http.Error(w, "Unauthorized", http.StatusUnauthorized)
+                return
+            }
+
+            // Extract resource context (org, team) from URL
+            orgID := chi.URLParam(r, "orgId")
+            teamID := chi.URLParam(r, "teamId")
+
+            // Check permission
+            allowed, err := s.authorizer.Can(user.ID, orgID, teamID, resource, action)
+            if err != nil || !allowed {
+                http.Error(w, "Forbidden", http.StatusForbidden)
+                return
+            }
+
+            next.ServeHTTP(w, r)
+        })
+    }
+}
+```
+
+## Permission Definitions
+
+Permissions are defined as resource-action pairs:
+
+```go
+// internal/authz/permissions.go
+
+const (
+    // Organization permissions
+    PermOrgView          = "org:view"
+    PermOrgUpdate        = "org:update"
+    PermOrgDelete        = "org:delete"
+    PermOrgManageBilling = "org:manage_billing"
+    
+    // Team permissions
+    PermTeamView         = "team:view"
+    PermTeamUpdate       = "team:update"
+    PermTeamDelete       = "team:delete"
+    PermTeamInvite       = "team:invite"
+    
+    // Deployment permissions
+    PermDeploymentCreate = "deployment:create"
+    PermDeploymentView   = "deployment:view"
+    PermDeploymentUpdate = "deployment:update"
+    PermDeploymentDelete = "deployment:delete"
+    PermDeploymentLogs   = "deployment:logs"
+    
+    // Template permissions
+    PermTemplateCreate   = "template:create"
+    PermTemplateView     = "template:view"
+    PermTemplateUpdate   = "template:update"
+    PermTemplateDelete   = "template:delete"
+    
+    // Secret permissions
+    PermSecretCreate     = "secret:create"
+    PermSecretView       = "secret:view"
+    PermSecretUpdate     = "secret:update"
+    PermSecretDelete     = "secret:delete"
+)
+```
+
+## Role Assignment
+
+### Assigning Organization Roles
+
+Organization owners can assign org-level roles:
+
+```bash
+curl -X PUT https://api.example.com/api/orgs/{orgId}/members/{userId} \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "role": "org_admin"
+  }'
+```
+
+### Assigning Team Roles
+
+Team admins and org admins can assign team roles:
+
+```bash
+curl -X PUT https://api.example.com/api/orgs/{orgId}/teams/{teamId}/members/{userId} \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "role": "developer"
+  }'
+```
+
+### Default Role Assignment
+
+<AccordionGroup>
+  <Accordion title="New organization owner">
+    When a user creates an organization:
+    - Organization role: `org_owner`
+    - Automatically added to a default team as `team_admin`
+  </Accordion>
+
+  <Accordion title="Invited team member">
+    When a user is invited to a team:
+    - Organization role: `org_member` (if not already a member)
+    - Team role: As specified in the invitation (default: `developer`)
+  </Accordion>
+
+  <Accordion title="OAuth signup">
+    When a user signs up via OAuth:
+    - A new organization is created with the user as `org_owner`
+    - A default team is created with the user as `team_admin`
+  </Accordion>
+</AccordionGroup>
+
+## API Examples
+
+### Check User Permissions
+
+```bash
+curl https://api.example.com/api/me/permissions \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Response:
+
+```json
+{
+  "organizations": [
+    {
+      "id": "org_abc123",
+      "role": "org_owner",
+      "permissions": [
+        "org:view",
+        "org:update",
+        "org:delete",
+        "org:manage_billing",
+        "team:create"
+      ]
+    }
+  ],
+  "teams": [
+    {
+      "id": "team_xyz789",
+      "organization_id": "org_abc123",
+      "role": "team_admin",
+      "permissions": [
+        "team:view",
+        "team:invite",
+        "deployment:create",
+        "deployment:view",
+        "deployment:update",
+        "deployment:delete"
+      ]
+    }
+  ]
+}
+```
+
+### List Organization Members
+
+```bash
+curl https://api.example.com/api/orgs/{orgId}/members \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Response:
+
+```json
+{
+  "members": [
+    {
+      "user_id": "user_123",
+      "email": "owner@example.com",
+      "role": "org_owner",
+      "joined_at": "2024-01-01T00:00:00Z"
+    },
+    {
+      "user_id": "user_456",
+      "email": "admin@example.com",
+      "role": "org_admin",
+      "joined_at": "2024-01-15T10:30:00Z"
+    }
+  ]
+}
+```
+
+## Security Considerations
+
+<CardGroup cols={2}>
+  <Card title="Principle of Least Privilege" icon="shield-check">
+    Always grant users the minimum role required for their responsibilities. Start with viewer or developer, escalate only when necessary.
+  </Card>
+  
+  <Card title="Regular Audits" icon="magnifying-glass">
+    Periodically review role assignments, especially org_owner and org_admin roles. Remove or downgrade inactive users.
+  </Card>
+  
+  <Card title="Separation of Duties" icon="users">
+    Avoid giving the same user both org_owner and direct access to production deployments. Use team roles for deployment access.
+  </Card>
+  
+  <Card title="Use Teams for Isolation" icon="lock">
+    Create separate teams for different environments (dev, staging, prod) to limit blast radius of accidental changes.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Permission Denied Errors
+
+If you receive a `403 Forbidden` response:
+
+1. **Check your role**: Verify your current roles with `GET /api/me/permissions`
+2. **Verify team membership**: Ensure you're a member of the team you're trying to access
+3. **Check resource ownership**: Some actions (like updating deployments) require ownership
+4. **Review required permissions**: Check the API documentation for the required permissions
+
+### Cannot See Expected Teams
+
+If teams are missing from the UI:
+
+- You must be explicitly added to teams as an `org_member`
+- `org_admin` and `org_owner` roles see all teams automatically
+- Contact your organization admin to be added to the team
+
+### Cannot Invite Team Members
+
+To invite members, you need:
+
+- `team_admin` role on the team, OR
+- `org_admin` or `org_owner` role in the organization
+
+If you don't have these roles, ask your team admin or org admin to send the invitation.
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="Multi-Tenancy" icon="building" href="/k8s-scheduler/multi-tenancy">
+    Understanding the organizational hierarchy
+  </Card>
+  
+  <Card title="API - Organizations" icon="code" href="/k8s-scheduler/api/organizations">
+    Organization and team management endpoints
+  </Card>
+  
+  <Card title="Templates" icon="file-code" href="/k8s-scheduler/templates">
+    Template visibility and permissions
+  </Card>
+  
+  <Card title="Secrets Management" icon="key" href="/k8s-scheduler/secrets">
+    Secret access control and scoping
+  </Card>
+</CardGroup>

@@ -1,0 +1,558 @@
+---
+title: "Template System"
+description: "Multi-service deployment templates with visibility scopes and YAML specification"
+---
+
+## Overview
+
+Templates define reusable multi-service deployment bundles with environment variables, resource limits, ingress configuration, and visibility scopes. They enable users to deploy complex applications with a single click.
+
+## Template Structure
+
+A template is defined using YAML and includes metadata, environment variables, services, and ingress configuration:
+
+```yaml
+displayName: LibreChat AI Stack
+description: Self-hosted AI chat platform with MongoDB and Redis
+category: AI & ML
+visibility: org              # private | team | org
+
+envVars:
+  - name: OPENAI_API_KEY
+    description: Your OpenAI API key
+    required: false
+    secret: true
+
+services:
+  - name: librechat
+    image: ghcr.io/danny-avila/librechat:latest
+    containerPort: 3080
+    hasConfigMap: true
+    hasSecrets: true
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+      limits:
+        cpu: "2000m"
+        memory: "4Gi"
+
+  - name: mongodb
+    image: mongo:6
+    containerPort: 27017
+
+  - name: redis
+    image: redis:7-alpine
+    containerPort: 6379
+
+ingress:
+  service: librechat
+  port: 3080
+```
+
+## Template Fields
+
+### Metadata
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `displayName` | string | Yes | Human-readable template name |
+| `description` | string | Yes | Brief description of what the template deploys |
+| `category` | string | No | Template category (e.g., "AI & ML", "Databases") |
+| `visibility` | string | Yes | Access scope: `private`, `team`, or `org` |
+
+### Environment Variables
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Environment variable name |
+| `description` | string | No | Description shown to users |
+| `required` | boolean | No | Whether users must provide a value |
+| `secret` | boolean | No | Whether the value should be treated as sensitive |
+| `defaultValue` | string | No | Default value if not provided |
+
+<Info>
+Environment variables marked as `secret: true` are stored in Vault and never exposed in API responses.
+</Info>
+
+### Services
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Service name (used as pod and service name) |
+| `image` | string | Yes | Container image (e.g., `postgres:15`) |
+| `containerPort` | number | Yes | Port the container listens on |
+| `hasConfigMap` | boolean | No | Whether to mount a ConfigMap for this service |
+| `hasSecrets` | boolean | No | Whether to inject secrets for this service |
+| `resources.requests.cpu` | string | No | CPU request (e.g., "500m") |
+| `resources.requests.memory` | string | No | Memory request (e.g., "1Gi") |
+| `resources.limits.cpu` | string | No | CPU limit |
+| `resources.limits.memory` | string | No | Memory limit |
+
+<Warning>
+Always specify resource limits for production workloads to prevent resource exhaustion.
+</Warning>
+
+### Ingress
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `service` | string | No | Service name to expose via ingress |
+| `port` | number | No | Service port to route traffic to |
+
+<Note>
+If `ingress` is not specified, the deployment will only be accessible within the cluster.
+</Note>
+
+## Template Visibility
+
+Visibility controls who can see and use templates:
+
+| Visibility | Created By | Visible To | Use Case |
+|------------|------------|------------|-----------|
+| `private` | Any user | Only creator | Personal experiments, drafts |
+| `team` | Team admin | All team members | Team-specific apps |
+| `org` | Org admin | All org members | Organization-wide standards |
+| System | Platform | Everyone | Pre-built templates (e.g., WordPress, LibreChat) |
+
+### Private Templates
+
+Created by individual users for personal use:
+
+```yaml
+visibility: private
+```
+
+**Permissions:**
+- Any user with `developer` or higher role can create
+- Only the creator can view, update, or delete
+- Cannot be shared with other users
+
+**Example use cases:**
+- Testing new deployment configurations
+- Personal development environments
+- Experimental setups
+
+### Team Templates
+
+Shared across team members:
+
+```yaml
+visibility: team
+```
+
+**Permissions:**
+- Only `team_admin` can create
+- All team members can view and use
+- Only creator and team admins can update/delete
+
+**Example use cases:**
+- Project-specific deployment templates
+- Team-standardized tech stacks
+- Shared development environments
+
+### Organization Templates
+
+Available to all organization members:
+
+```yaml
+visibility: org
+```
+
+**Permissions:**
+- Only `org_admin` or `org_owner` can create
+- All org members can view and use
+- Only creator and org admins can update/delete
+
+**Example use cases:**
+- Company-wide infrastructure standards
+- Approved technology stacks
+- Compliance-vetted configurations
+
+### System Templates
+
+Pre-installed templates provided by the platform:
+
+**Permissions:**
+- Only platform administrators can create
+- Visible to all users across all organizations
+- Cannot be modified by users (read-only)
+
+**Examples:**
+- WordPress + MySQL
+- LibreChat + MongoDB + Redis
+- PostgreSQL + pgAdmin
+- NGINX + PHP-FPM
+
+<Tip>
+System templates serve as starting points. Users can deploy them and customize the resulting deployment.
+</Tip>
+
+## Creating Templates
+
+### Via API
+
+```bash
+curl -X POST https://api.example.com/api/templates \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my-app-stack",
+    "spec": "displayName: My App Stack\ndescription: Custom app with database\nvisibility: team\n\nservices:\n  - name: app\n    image: myapp:latest\n    containerPort: 8080\n\n  - name: postgres\n    image: postgres:15\n    containerPort: 5432\n\ningress:\n  service: app\n  port: 8080"
+  }'
+```
+
+### Via React UI
+
+The React frontend provides a YAML editor with syntax validation:
+
+```typescript
+import { useCreateTemplate } from '@/api/hooks/useTemplates'
+
+const CreateTemplateModal = () => {
+  const createTemplate = useCreateTemplate()
+  
+  const handleSubmit = (spec: string) => {
+    createTemplate.mutate({
+      name: 'my-template',
+      spec: spec
+    })
+  }
+  
+  return (
+    <YamlEditor
+      onChange={handleSubmit}
+      schema={templateSchema}
+    />
+  )
+}
+```
+
+## Using Templates
+
+### List Available Templates
+
+```bash
+curl https://api.example.com/api/templates \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Response:
+
+```json
+{
+  "templates": [
+    {
+      "name": "librechat",
+      "display_name": "LibreChat AI Stack",
+      "description": "Self-hosted AI chat platform",
+      "category": "AI & ML",
+      "visibility": "system",
+      "created_by": "system",
+      "created_at": "2024-01-01T00:00:00Z"
+    },
+    {
+      "name": "my-app-stack",
+      "display_name": "My App Stack",
+      "description": "Custom app with database",
+      "visibility": "team",
+      "created_by": "user_123",
+      "created_at": "2024-01-15T10:30:00Z"
+    }
+  ]
+}
+```
+
+### Deploy from Template
+
+```bash
+curl -X POST https://api.example.com/api/deployments \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my-deployment",
+    "template": "librechat",
+    "env": {
+      "OPENAI_API_KEY": "sk-proj-..."
+    }
+  }'
+```
+
+## Template Sync
+
+Templates are stored in PostgreSQL and optionally synced to Kubernetes ConfigMaps for operator access.
+
+### Database Storage
+
+Templates are stored in the `templates` table:
+
+```sql
+CREATE TABLE templates (
+  id TEXT PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,
+  spec TEXT NOT NULL,
+  visibility TEXT NOT NULL,
+  created_by TEXT REFERENCES users(id),
+  organization_id TEXT REFERENCES organizations(id),
+  team_id TEXT REFERENCES teams(id),
+  created_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+### ConfigMap Sync
+
+The `templatesync` package keeps ConfigMaps in sync with the database:
+
+```go
+// internal/templatesync/sync.go
+
+func (s *Syncer) SyncTemplate(template *db.Template) error {
+    cm := &corev1.ConfigMap{
+        ObjectMeta: metav1.ObjectMeta{
+            Name:      "template-" + template.Name,
+            Namespace: "k8s-scheduler-system",
+            Labels: map[string]string{
+                "app":            "k8s-scheduler",
+                "template-name":  template.Name,
+                "visibility":     template.Visibility,
+            },
+        },
+        Data: map[string]string{
+            "spec": template.Spec,
+        },
+    }
+
+    _, err := s.client.CoreV1().ConfigMaps("k8s-scheduler-system").Create(ctx, cm, metav1.CreateOptions{})
+    return err
+}
+```
+
+## Example Templates
+
+### WordPress + MySQL
+
+```yaml
+displayName: WordPress
+description: WordPress with MySQL database
+category: CMS
+visibility: system
+
+envVars:
+  - name: WORDPRESS_DB_PASSWORD
+    description: MySQL root password
+    required: true
+    secret: true
+
+services:
+  - name: wordpress
+    image: wordpress:latest
+    containerPort: 80
+    hasSecrets: true
+    resources:
+      requests:
+        cpu: "250m"
+        memory: "512Mi"
+      limits:
+        cpu: "1000m"
+        memory: "1Gi"
+
+  - name: mysql
+    image: mysql:8
+    containerPort: 3306
+    hasSecrets: true
+    resources:
+      requests:
+        cpu: "250m"
+        memory: "512Mi"
+      limits:
+        cpu: "500m"
+        memory: "1Gi"
+
+ingress:
+  service: wordpress
+  port: 80
+```
+
+### PostgreSQL + pgAdmin
+
+```yaml
+displayName: PostgreSQL with pgAdmin
+description: PostgreSQL database with web-based admin interface
+category: Databases
+visibility: system
+
+envVars:
+  - name: POSTGRES_PASSWORD
+    description: PostgreSQL superuser password
+    required: true
+    secret: true
+  - name: PGADMIN_EMAIL
+    description: pgAdmin login email
+    required: true
+    secret: false
+  - name: PGADMIN_PASSWORD
+    description: pgAdmin login password
+    required: true
+    secret: true
+
+services:
+  - name: postgres
+    image: postgres:15
+    containerPort: 5432
+    hasSecrets: true
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+      limits:
+        cpu: "2000m"
+        memory: "4Gi"
+
+  - name: pgadmin
+    image: dpage/pgadmin4:latest
+    containerPort: 80
+    hasSecrets: true
+    resources:
+      requests:
+        cpu: "250m"
+        memory: "512Mi"
+      limits:
+        cpu: "500m"
+        memory: "1Gi"
+
+ingress:
+  service: pgadmin
+  port: 80
+```
+
+### Single-Service Application
+
+```yaml
+displayName: Simple Web App
+description: Single container web application
+category: Web Apps
+visibility: private
+
+envVars:
+  - name: PORT
+    description: Port to listen on
+    defaultValue: "8080"
+    required: false
+
+services:
+  - name: app
+    image: myregistry.azurecr.io/myapp:v1.0.0
+    containerPort: 8080
+    hasConfigMap: true
+    hasSecrets: true
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+
+ingress:
+  service: app
+  port: 8080
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Always Set Resource Limits" icon="gauge-high">
+    Define CPU and memory limits to prevent resource exhaustion and ensure fair scheduling.
+  </Card>
+  
+  <Card title="Use Secrets for Sensitive Data" icon="key">
+    Mark sensitive environment variables as `secret: true` to store them securely in Vault.
+  </Card>
+  
+  <Card title="Provide Clear Descriptions" icon="file-lines">
+    Write helpful descriptions for environment variables to guide users during deployment.
+  </Card>
+  
+  <Card title="Test Before Sharing" icon="flask">
+    Create templates as `private` first, test thoroughly, then change visibility to `team` or `org`.
+  </Card>
+  
+  <Card title="Use Categories" icon="folder-tree">
+    Organize templates with meaningful categories for easier discovery.
+  </Card>
+  
+  <Card title="Version Your Images" icon="tag">
+    Avoid using `latest` tags in production templates. Pin specific versions.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Template Not Visible
+
+If you can't see a template:
+
+1. **Check visibility**: Only templates at your access level are shown
+2. **Verify team membership**: Team templates require team membership
+3. **Check organization**: Org templates are only visible within the org
+
+### Template Validation Errors
+
+**Common YAML errors:**
+
+- Missing required fields (`displayName`, `description`, `services`)
+- Invalid visibility value (must be `private`, `team`, or `org`)
+- Malformed YAML syntax (indentation, missing colons)
+- Invalid resource format (e.g., `cpu: 500` instead of `cpu: "500m"`)
+
+**Validation example:**
+
+```go
+// internal/db/templates.go
+
+func (s *Store) ValidateTemplate(spec string) error {
+    var t Template
+    if err := yaml.Unmarshal([]byte(spec), &t); err != nil {
+        return fmt.Errorf("invalid YAML: %w", err)
+    }
+    
+    if t.DisplayName == "" {
+        return errors.New("displayName is required")
+    }
+    
+    if len(t.Services) == 0 {
+        return errors.New("at least one service is required")
+    }
+    
+    // Additional validation...
+    return nil
+}
+```
+
+### Deployment Fails After Template Update
+
+If deployments fail after updating a template:
+
+- Templates are snapshots - existing deployments use the template version from creation time
+- Update the deployment to pick up template changes
+- Or delete and recreate the deployment
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="API - Templates" icon="code" href="/k8s-scheduler/api/templates">
+    Template management API reference
+  </Card>
+  
+  <Card title="Secrets Management" icon="key" href="/k8s-scheduler/secrets">
+    Managing secrets in templates
+  </Card>
+  
+  <Card title="Multi-Tenancy" icon="building" href="/k8s-scheduler/multi-tenancy">
+    Understanding visibility scopes
+  </Card>
+  
+  <Card title="RBAC" icon="lock" href="/k8s-scheduler/rbac">
+    Template creation permissions
+  </Card>
+</CardGroup>

@@ -1,0 +1,601 @@
+---
+title: "Vault Module"
+description: "HashiCorp Vault AWS resources with KMS auto-unseal and DynamoDB storage backend"
+---
+
+## Overview
+
+The Vault module creates AWS resources required for running HashiCorp Vault on EKS with KMS auto-unseal and DynamoDB as the storage backend. It configures IAM roles for IRSA (IAM Roles for Service Accounts) to allow Vault pods to access AWS services.
+
+## Features
+
+<CardGroup cols={2}>
+  <Card title="KMS Auto-Unseal" icon="key">
+    AWS KMS key for automatic Vault unsealing on pod restart
+  </Card>
+  
+  <Card title="DynamoDB Storage" icon="database">
+    Highly available DynamoDB table for Vault storage backend
+  </Card>
+  
+  <Card title="IRSA Integration" icon="fingerprint">
+    IAM role for EKS service account with least privilege permissions
+  </Card>
+  
+  <Card title="Key Rotation" icon="rotate">
+    Optional automatic KMS key rotation enabled by default
+  </Card>
+  
+  <Card title="Point-in-Time Recovery" icon="clock-rotate-left">
+    DynamoDB PITR enabled by default for data protection
+  </Card>
+  
+  <Card title="Helm-Ready Config" icon="helm">
+    Output configuration object for Vault Helm chart
+  </Card>
+</CardGroup>
+
+## Architecture
+
+```
+┌────────────────────────────────────────────────────────────┐
+│                    EKS Cluster                             │
+│                                                             │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │              Vault Namespace                         │  │
+│  │                                                        │  │
+│  │  ┌────────────┐  ┌────────────┐  ┌────────────┐  │  │
+│  │  │  Vault Pod  │  │  Vault Pod  │  │  Vault Pod  │  │  │
+│  │  │  (Active)   │  │ (Standby)  │  │ (Standby)  │  │  │
+│  │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  │  │
+│  │         │              │              │         │  │
+│  │         └──────────────┼──────────────┘         │  │
+│  │                        │                        │  │
+│  │         Service Account with IRSA annotation       │  │
+│  │         eks.amazonaws.com/role-arn = <IAM_ROLE>     │  │
+│  └────────────────────────┬─────────────────────────┘  │
+│                         │                               │
+└─────────────────────────┼─────────────────────────────────┘
+                          │
+         ┌────────────────┼────────────────┐
+         │                │                │
+         ▼                ▼                ▼
+┌────────────────┐  ┌───────────────┐  ┌────────────────┐
+│   IAM Role    │  │   AWS KMS     │  │   DynamoDB   │
+│  (via IRSA)   │  │ (Auto-unseal)│  │  (Storage)   │
+└────────────────┘  └───────────────┘  └────────────────┘
+```
+
+## Usage Examples
+
+### Basic Configuration
+
+```hcl
+module "vault" {
+  source = "git@github.com:opsnorth/terraform-modules.git//vault?ref=v1.0.0"
+
+  cluster_name      = "dev-eks-cluster"
+  environment       = "dev"
+  oidc_provider_arn = module.eks.oidc_provider_arn
+  oidc_provider_url = module.eks.oidc_provider_url
+
+  tags = {
+    Environment = "dev"
+    Team        = "platform"
+  }
+}
+```
+
+### Production Configuration
+
+```hcl
+module "vault" {
+  source = "git@github.com:opsnorth/terraform-modules.git//vault?ref=v1.0.0"
+
+  cluster_name      = "prod-eks-cluster"
+  environment       = "production"
+  oidc_provider_arn = module.eks.oidc_provider_arn
+  oidc_provider_url = module.eks.oidc_provider_url
+
+  # Custom namespace and service account
+  vault_namespace       = "vault"
+  vault_service_account = "vault"
+
+  # Extended KMS key deletion window
+  kms_deletion_window_days = 30
+
+  # Enable key rotation
+  kms_enable_key_rotation = true
+
+  # Enable DynamoDB point-in-time recovery
+  dynamodb_point_in_time_recovery = true
+
+  tags = {
+    Environment = "production"
+    Critical    = "true"
+    Compliance  = "required"
+  }
+}
+```
+
+### With EKS Module
+
+```hcl
+module "eks" {
+  source = "git@github.com:opsnorth/terraform-modules.git//eks?ref=v1.0.0"
+
+  cluster_name       = "my-eks-cluster"
+  kubernetes_version = "1.34"
+  private_subnet_ids = module.vpc.private_subnet_ids
+}
+
+module "vault" {
+  source = "git@github.com:opsnorth/terraform-modules.git//vault?ref=v1.0.0"
+
+  cluster_name      = module.eks.cluster_id
+  environment       = var.environment
+  oidc_provider_arn = module.eks.oidc_provider_arn
+  oidc_provider_url = module.eks.oidc_provider_url
+}
+```
+
+## Inputs
+
+| Name | Description | Type | Default | Required |
+|------|-------------|------|---------|:--------:|
+| `cluster_name` | Name of the EKS cluster | `string` | n/a | yes |
+| `environment` | Environment name | `string` | n/a | yes |
+| `oidc_provider_arn` | ARN of the OIDC provider for EKS | `string` | n/a | yes |
+| `oidc_provider_url` | URL of the OIDC provider for EKS | `string` | n/a | yes |
+| `vault_namespace` | Kubernetes namespace for Vault | `string` | `"vault"` | no |
+| `vault_service_account` | Kubernetes service account for Vault | `string` | `"vault"` | no |
+| `kms_deletion_window_days` | Days before KMS key deletion | `number` | `7` | no |
+| `kms_enable_key_rotation` | Enable KMS key rotation | `bool` | `true` | no |
+| `dynamodb_point_in_time_recovery` | Enable DynamoDB PITR | `bool` | `true` | no |
+| `tags` | Tags to apply to resources | `map(string)` | `{}` | no |
+
+## Outputs
+
+| Name | Description |
+|------|-------------|
+| `kms_key_id` | KMS Key ID for auto-unseal |
+| `kms_key_arn` | KMS Key ARN |
+| `dynamodb_table_name` | DynamoDB table name |
+| `dynamodb_table_arn` | DynamoDB table ARN |
+| `iam_role_arn` | IAM Role ARN for IRSA |
+| `iam_role_name` | IAM Role name |
+| `vault_config` | Configuration object for Helm chart |
+
+## Deploying Vault with Helm
+
+Use the module outputs to configure Vault Helm chart:
+
+### Install Vault
+
+```bash
+# Add HashiCorp Helm repository
+helm repo add hashicorp https://helm.releases.hashicorp.com
+helm repo update
+
+# Create namespace
+kubectl create namespace vault
+
+# Install Vault
+helm install vault hashicorp/vault \
+  --namespace vault \
+  --values vault-values.yaml
+```
+
+### Helm Values (vault-values.yaml)
+
+```yaml
+server:
+  ha:
+    enabled: true
+    replicas: 3
+    
+    raft:
+      enabled: false
+    
+    config: |
+      ui = true
+      
+      listener "tcp" {
+        tls_disable = 1
+        address     = "[::]:8200"
+        cluster_address = "[::]:8201"
+      }
+      
+      storage "dynamodb" {
+        ha_enabled = "true"
+        region     = "us-east-1"
+        table      = "<DYNAMODB_TABLE_NAME>"
+      }
+      
+      seal "awskms" {
+        region     = "us-east-1"
+        kms_key_id = "<KMS_KEY_ID>"
+      }
+      
+      service_registration "kubernetes" {}
+
+  serviceAccount:
+    create: true
+    name: "vault"
+    annotations:
+      eks.amazonaws.com/role-arn: "<IAM_ROLE_ARN>"
+
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2000m"
+      memory: "2Gi"
+
+ui:
+  enabled: true
+  serviceType: "ClusterIP"
+```
+
+### Terraform-Generated Helm Values
+
+```hcl
+resource "helm_release" "vault" {
+  name       = "vault"
+  repository = "https://helm.releases.hashicorp.com"
+  chart      = "vault"
+  namespace  = module.vault.vault_config.namespace
+  version    = "0.27.0"
+
+  values = [
+    yamlencode({
+      server = {
+        ha = {
+          enabled  = true
+          replicas = 3
+          config   = <<-EOT
+            ui = true
+
+            listener "tcp" {
+              tls_disable = 1
+              address     = "[::]:8200"
+              cluster_address = "[::]:8201"
+            }
+
+            storage "dynamodb" {
+              ha_enabled = "true"
+              region     = "${var.aws_region}"
+              table      = "${module.vault.dynamodb_table_name}"
+            }
+
+            seal "awskms" {
+              region     = "${var.aws_region}"
+              kms_key_id = "${module.vault.kms_key_id}"
+            }
+
+            service_registration "kubernetes" {}
+          EOT
+        }
+        serviceAccount = {
+          create = true
+          name   = module.vault.vault_config.service_account
+          annotations = {
+            "eks.amazonaws.com/role-arn" = module.vault.iam_role_arn
+          }
+        }
+        resources = {
+          requests = {
+            cpu    = "500m"
+            memory = "1Gi"
+          }
+          limits = {
+            cpu    = "2000m"
+            memory = "2Gi"
+          }
+        }
+      }
+      ui = {
+        enabled     = true
+        serviceType = "ClusterIP"
+      }
+    })
+  ]
+}
+```
+
+## Initializing Vault
+
+### Initialize and Unseal
+
+```bash
+# Wait for pods to be ready
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=vault -n vault
+
+# Initialize Vault (only run once)
+kubectl exec -n vault vault-0 -- vault operator init \
+  -key-shares=5 \
+  -key-threshold=3 \
+  -format=json > vault-keys.json
+
+# Save the keys securely!
+cat vault-keys.json | jq -r .root_token
+cat vault-keys.json | jq -r .unseal_keys_b64[]
+```
+
+<Warning>
+Store the root token and unseal keys in a secure location (e.g., AWS Secrets Manager, 1Password). They cannot be recovered if lost.
+</Warning>
+
+### Check Vault Status
+
+```bash
+# Check seal status
+kubectl exec -n vault vault-0 -- vault status
+
+# All pods should auto-unseal using KMS
+kubectl get pods -n vault
+```
+
+### Enable Secrets Engine
+
+```bash
+# Login with root token
+kubectl exec -n vault vault-0 -- vault login <ROOT_TOKEN>
+
+# Enable KV v2 secrets engine
+kubectl exec -n vault vault-0 -- vault secrets enable -path=secret kv-v2
+
+# Write a test secret
+kubectl exec -n vault vault-0 -- vault kv put secret/test password=secret123
+
+# Read the secret
+kubectl exec -n vault vault-0 -- vault kv get secret/test
+```
+
+## Kubernetes Authentication
+
+Enable Kubernetes auth for applications:
+
+```bash
+# Enable Kubernetes auth
+kubectl exec -n vault vault-0 -- vault auth enable kubernetes
+
+# Configure Kubernetes auth
+kubectl exec -n vault vault-0 -- vault write auth/kubernetes/config \
+  kubernetes_host="https://kubernetes.default.svc" \
+  kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+
+# Create a policy
+kubectl exec -n vault vault-0 -- vault policy write app-policy - <<EOF
+path "secret/data/app/*" {
+  capabilities = ["read", "list"]
+}
+EOF
+
+# Create a role
+kubectl exec -n vault vault-0 -- vault write auth/kubernetes/role/app \
+  bound_service_account_names=app \
+  bound_service_account_namespaces=default \
+  policies=app-policy \
+  ttl=24h
+```
+
+## External Secrets Operator Integration
+
+Configure ESO to sync secrets from Vault:
+
+### ClusterSecretStore
+
+```yaml
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: vault-backend
+spec:
+  provider:
+    vault:
+      server: "http://vault.vault.svc.cluster.local:8200"
+      path: "secret"
+      version: "v2"
+      auth:
+        kubernetes:
+          mountPath: "kubernetes"
+          role: "external-secrets"
+          serviceAccountRef:
+            name: "external-secrets"
+            namespace: "external-secrets-system"
+```
+
+### ExternalSecret
+
+```yaml
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: app-secrets
+  namespace: default
+spec:
+  refreshInterval: 1m
+  secretStoreRef:
+    name: vault-backend
+    kind: ClusterSecretStore
+  target:
+    name: app-secrets
+    creationPolicy: Owner
+  data:
+  - secretKey: password
+    remoteRef:
+      key: secret/data/app/database
+      property: password
+```
+
+## Backup and Recovery
+
+### DynamoDB Backup
+
+**Point-in-Time Recovery (PITR):**
+- Enabled by default via `dynamodb_point_in_time_recovery = true`
+- Allows restore to any point in the last 35 days
+
+**Manual Backup:**
+```bash
+aws dynamodb create-backup \
+  --table-name <DYNAMODB_TABLE_NAME> \
+  --backup-name vault-backup-$(date +%Y%m%d)
+```
+
+### KMS Key Backup
+
+KMS keys cannot be exported, but:
+- Key material is replicated across multiple AZs
+- Key rotation creates new key versions
+- Old versions remain available for decryption
+
+### Vault Data Export
+
+```bash
+# Export all secrets (requires root token)
+kubectl exec -n vault vault-0 -- vault kv list -format=json secret/ > secrets-list.json
+
+# Export individual secrets
+for secret in $(cat secrets-list.json | jq -r '.[]'); do
+  kubectl exec -n vault vault-0 -- vault kv get -format=json secret/$secret > $secret.json
+done
+```
+
+## Cost Considerations
+
+<AccordionGroup>
+  <Accordion title="KMS Costs">
+    - KMS key: $1/month
+    - API requests: $0.03 per 10,000 requests
+    - Vault unsealing: ~1000 requests/day = ~$0.10/month
+    - **Total: ~$1.10/month**
+  </Accordion>
+
+  <Accordion title="DynamoDB Costs">
+    - On-demand pricing (pay per request)
+    - Typical Vault usage: ~$5-20/month
+    - PITR: Additional 20% of table storage
+    - Consider provisioned capacity for predictable workloads
+  </Accordion>
+
+  <Accordion title="EKS Pod Costs">
+    - 3 Vault pods @ 500m CPU, 1Gi memory
+    - Runs on existing EKS node group (no additional compute cost)
+    - Storage: ~1GB per pod for cache
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+### Vault Pods Not Starting
+
+**Check IAM role:**
+```bash
+kubectl describe pod -n vault vault-0 | grep ServiceAccount
+kubectl describe serviceaccount -n vault vault
+```
+
+**Verify IRSA annotation:**
+```bash
+kubectl get serviceaccount -n vault vault -o yaml | grep role-arn
+```
+
+**Check pod logs:**
+```bash
+kubectl logs -n vault vault-0
+```
+
+### Cannot Auto-Unseal
+
+**Test KMS access from pod:**
+```bash
+kubectl exec -n vault vault-0 -- aws kms describe-key --key-id <KMS_KEY_ID>
+```
+
+**Common issues:**
+- IAM role missing `kms:Decrypt` permission
+- KMS key not in the same region as EKS
+- OIDC provider not configured correctly
+
+### DynamoDB Access Issues
+
+**Test DynamoDB access:**
+```bash
+kubectl exec -n vault vault-0 -- aws dynamodb describe-table --table-name <TABLE_NAME>
+```
+
+**Check IAM permissions:**
+```bash
+aws iam get-role-policy \
+  --role-name <IAM_ROLE_NAME> \
+  --policy-name vault-policy
+```
+
+### Vault Initialization Failed
+
+**Check seal status:**
+```bash
+kubectl exec -n vault vault-0 -- vault status
+```
+
+**If sealed manually, unseal:**
+```bash
+kubectl exec -n vault vault-0 -- vault operator unseal <UNSEAL_KEY_1>
+kubectl exec -n vault vault-0 -- vault operator unseal <UNSEAL_KEY_2>
+kubectl exec -n vault vault-0 -- vault operator unseal <UNSEAL_KEY_3>
+```
+
+<Note>
+With KMS auto-unseal configured, manual unsealing should not be necessary.
+</Note>
+
+## Security Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Secure Root Token" icon="key">
+    Store root token in AWS Secrets Manager or a password manager. Revoke after initial setup.
+  </Card>
+  
+  <Card title="Enable Audit Logging" icon="file-lines">
+    Configure Vault audit logging to CloudWatch or S3 for compliance.
+  </Card>
+  
+  <Card title="Restrict Network Access" icon="shield-halved">
+    Use NetworkPolicies to limit Vault access to authorized pods only.
+  </Card>
+  
+  <Card title="Key Rotation" icon="rotate">
+    Enable KMS key rotation (enabled by default) for enhanced security.
+  </Card>
+  
+  <Card title="Least Privilege IAM" icon="user-lock">
+    IAM role has minimum permissions for KMS and DynamoDB access only.
+  </Card>
+  
+  <Card title="Enable PITR" icon="clock-rotate-left">
+    DynamoDB point-in-time recovery (enabled by default) protects against data loss.
+  </Card>
+</CardGroup>
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="EKS Module" icon="kubernetes" href="/terraform-modules/eks">
+    Deploy EKS cluster for Vault
+  </Card>
+  
+  <Card title="K8s Scheduler Secrets" icon="key" href="/k8s-scheduler/secrets">
+    Using Vault for secrets management
+  </Card>
+  
+  <Card title="Infrastructure Guide" icon="book" href="/infrastructure/overview">
+    Complete deployment workflow
+  </Card>
+  
+  <Card title="Dependencies" icon="puzzle-piece" href="/k8s-scheduler/dependencies">
+    External Secrets Operator setup
+  </Card>
+</CardGroup>

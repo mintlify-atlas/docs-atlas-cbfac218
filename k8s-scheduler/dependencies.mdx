@@ -1,0 +1,571 @@
+---
+title: Dependencies
+description: Platform dependencies and integration points for k8s-scheduler
+---
+
+k8s-scheduler takes an opinionated approach to infrastructure. This page documents all platform dependencies, why they're needed, and how they integrate.
+
+## Dependency Overview
+
+<CardGroup cols={2}>
+  <Card title="Required" icon="check-circle">
+    Must be installed for basic functionality
+  </Card>
+  
+  <Card title="Recommended" icon="star">
+    Strongly recommended for production
+  </Card>
+  
+  <Card title="Optional" icon="puzzle-piece">
+    Additional features and integrations
+  </Card>
+  
+  <Card title="Conditional" icon="code-branch">
+    Required only in specific scenarios
+  </Card>
+</CardGroup>
+
+## Required Dependencies
+
+These components are required for k8s-scheduler to function.
+
+### PostgreSQL
+
+<ParamField path="PostgreSQL" type="database" required>
+  Relational database for persistent storage.
+
+  **Version**: 12+
+
+  **Why**: Stores users, organizations, teams, deployments, templates, billing plans, sessions
+
+  **Integration points**:
+  - Server connects via `DATABASE_DSN`
+  - Optional session backend (`SESSION_BACKEND=postgres`)
+  - Database migrations run via `migrate` tool
+
+  **Managed options**:
+  - AWS RDS for PostgreSQL
+  - Google Cloud SQL
+  - Azure Database for PostgreSQL
+  - Self-hosted (via Helm chart)
+
+  **Configuration**:
+  ```bash
+  DATABASE_DSN="postgres://user:password@db-host:5432/scheduler?sslmode=require"
+  ```
+</ParamField>
+
+### Traefik
+
+<ParamField path="Traefik" type="ingress" required>
+  Ingress controller for routing wildcard subdomains to user deployments.
+
+  **Version**: v2.10+
+
+  **Why**: Routes `*.domain.com` traffic to individual user deployment services
+
+  **Integration points**:
+  - Operator creates `Ingress` resources with `ingressClassName: traefik`
+  - Handles routing for user deployments like `user-123-myapp.example.com`
+  - Works alongside AWS ALB Controller (server uses ALB, user deployments use Traefik)
+
+  **Installation**:
+  ```bash
+  helm repo add traefik https://traefik.github.io/charts
+  helm install traefik traefik/traefik -n traefik --create-namespace
+  ```
+
+  **Why not ALB for user deployments?**
+  - ALB has a limit of 100 rules per load balancer
+  - Users may create hundreds/thousands of deployments
+  - Traefik handles unlimited ingress rules efficiently
+</ParamField>
+
+### cert-manager
+
+<ParamField path="cert-manager" type="certificates" required>
+  Automatic TLS certificate provisioning and renewal.
+
+  **Version**: v1.12+
+
+  **Why**: Provisions TLS certificates for server and all user deployments
+
+  **Integration points**:
+  - Operator creates `Ingress` resources with cert-manager annotations
+  - Automatically requests certificates from Let's Encrypt
+  - Supports DNS01 challenge via Cloudflare
+
+  **Installation**:
+  ```bash
+  helm repo add jetstack https://charts.jetstack.io
+  helm install cert-manager jetstack/cert-manager \
+    -n cert-manager --create-namespace \
+    --set installCRDs=true
+  ```
+
+  **ClusterIssuer configuration**:
+  ```yaml
+  apiVersion: cert-manager.io/v1
+  kind: ClusterIssuer
+  metadata:
+    name: letsencrypt-prod
+  spec:
+    acme:
+      server: https://acme-v02.api.letsencrypt.org/directory
+      email: admin@example.com
+      privateKeySecretRef:
+        name: letsencrypt-prod
+      solvers:
+        - dns01:
+            cloudflare:
+              apiTokenSecretRef:
+                name: cloudflare-api-token
+                key: api-token
+  ```
+</ParamField>
+
+### External DNS
+
+<ParamField path="External DNS" type="dns" required>
+  Automatic DNS record creation from Kubernetes resources.
+
+  **Version**: v0.13+
+
+  **Why**: Auto-creates DNS records for server and user deployment ingresses
+
+  **Integration points**:
+  - Watches `Ingress` resources with annotation `external-dns.alpha.kubernetes.io/hostname`
+  - Creates DNS records in Cloudflare (or Route53, etc.)
+  - Syncs on ingress create/update/delete
+
+  **Installation**:
+  ```bash
+  helm repo add external-dns https://kubernetes-sigs.github.io/external-dns/
+  helm install external-dns external-dns/external-dns \
+    -n external-dns --create-namespace \
+    --set provider=cloudflare \
+    --set cloudflare.apiToken=<token>
+  ```
+</ParamField>
+
+### Cloudflare
+
+<ParamField path="Cloudflare" type="dns-provider" required>
+  DNS provider for External DNS and cert-manager.
+
+  **Why**: Manages DNS records and DNS01 challenge for TLS certificates
+
+  **Integration points**:
+  - External DNS creates A/CNAME records
+  - cert-manager uses DNS01 challenge for wildcard certificates
+
+  **Configuration**:
+  - Create API token with permissions:
+    - Zone → DNS → Edit
+    - Zone → Zone → Read
+  - Store in Kubernetes Secret:
+    ```bash
+    kubectl create secret generic cloudflare-api-token \
+      -n cert-manager \
+      --from-literal=api-token=your-cloudflare-token
+    ```
+
+  **Alternatives**: Route53 (AWS), Cloud DNS (GCP), Azure DNS
+</ParamField>
+
+## Conditional Dependencies
+
+Required only in specific deployment scenarios.
+
+### AWS Load Balancer Controller
+
+<ParamField path="AWS Load Balancer Controller" type="ingress" conditional>
+  Provisions AWS Application Load Balancers from Kubernetes Ingress resources.
+
+  **Version**: v2.6+
+
+  **Required when**: Deploying on AWS EKS
+
+  **Why**: Creates ALB for the server ingress (`ingressClassName: alb`)
+
+  **Integration points**:
+  - Server Helm chart creates `Ingress` with ALB annotations
+  - Controller provisions ALB, target groups, listeners
+  - Supports internal ALBs (Tailscale VPN access)
+
+  **Installation**:
+  ```bash
+  helm repo add eks https://aws.github.io/eks-charts
+  helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+    -n kube-system \
+    --set clusterName=<cluster-name> \
+    --set serviceAccount.create=true \
+    --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=<iam-role-arn>
+  ```
+
+  **Not required when**: Using Traefik or NGINX for all ingress (non-AWS deployments)
+</ParamField>
+
+## Recommended Dependencies
+
+Strongly recommended for production deployments.
+
+### HashiCorp Vault
+
+<ParamField path="HashiCorp Vault" type="secrets" recommended>
+  Centralized secrets management.
+
+  **Version**: v1.14+
+
+  **Why**: Securely stores and manages secrets for users, templates, and deployments
+
+  **Integration points**:
+  - **Server**: Vault Agent injects secrets (database, OAuth, Stripe, email) into pod
+  - **Secrets API**: Stores user/template/deployment secrets in Vault KV v2
+  - **External Secrets Operator**: Syncs Vault secrets to Kubernetes Secrets for user pods
+
+  **Secret paths**:
+  ```
+  secret/k8s-scheduler/
+  ├── database              # Server credentials
+  ├── google                # OAuth credentials
+  ├── email                 # SMTP/SendGrid config
+  ├── ai                    # Anthropic API key
+  ├── stripe                # Billing keys
+  └── secrets               # Observability passwords
+
+  secret/users/{userId}/
+  ├── secrets/              # User-level secrets
+  ├── templates/{name}/     # Template secrets
+  └── deployments/{name}/   # Deployment secrets
+  ```
+
+  **Installation**:
+  ```bash
+  helm repo add hashicorp https://helm.releases.hashicorp.com
+  helm install vault hashicorp/vault \
+    -n vault --create-namespace \
+    --set server.ha.enabled=true \
+    --set server.ha.replicas=3
+  ```
+
+  **Setup**:
+  1. Initialize and unseal Vault
+  2. Enable KV v2 secrets engine:
+     ```bash
+     vault secrets enable -path=secret kv-v2
+     ```
+  3. Run setup script:
+     ```bash
+     ./scripts/setup-vault.sh
+     ```
+
+  **Alternatives**:
+  - AWS Secrets Manager (`SECRETS_BACKEND=aws`)
+  - Database encryption (`SECRETS_BACKEND=database`, requires `SECRETS_ENCRYPTION_KEY`)
+</ParamField>
+
+### External Secrets Operator
+
+<ParamField path="External Secrets Operator" type="secrets-sync" recommended>
+  Syncs external secrets (Vault, AWS) into Kubernetes Secrets.
+
+  **Version**: v0.9+
+
+  **Required when**: Using Vault or AWS Secrets Manager
+
+  **Why**: Pulls user secrets from Vault/AWS and creates Kubernetes Secrets for deployment pods
+
+  **Integration points**:
+  - Operator creates `ExternalSecret` resources for each deployment
+  - ESO watches these resources and syncs from Vault
+  - Creates/updates corresponding `Secret` resources
+  - Pods mount these secrets as files or environment variables
+
+  **Installation**:
+  ```bash
+  helm repo add external-secrets https://charts.external-secrets.io
+  helm install external-secrets external-secrets/external-secrets \
+    -n external-secrets --create-namespace
+  ```
+
+  **ClusterSecretStore**:
+  Created by k8s-scheduler Helm chart:
+  ```yaml
+  apiVersion: external-secrets.io/v1beta1
+  kind: ClusterSecretStore
+  metadata:
+    name: vault-backend
+  spec:
+    provider:
+      vault:
+        server: http://vault.vault.svc:8200
+        path: secret
+        version: v2
+        auth:
+          kubernetes:
+            mountPath: kubernetes
+            role: k8s-scheduler
+            serviceAccountRef:
+              name: k8s-scheduler
+              namespace: scheduler-system
+  ```
+</ParamField>
+
+### Vault Agent Injector
+
+<ParamField path="Vault Agent Injector" type="secrets-injection" recommended>
+  Mutating webhook that injects Vault Agent sidecars into pods.
+
+  **Version**: Bundled with Vault Helm chart
+
+  **Required when**: Using Vault for server secrets
+
+  **Why**: Injects database credentials, OAuth secrets, and API keys into server pod
+
+  **Integration points**:
+  - Server deployment has Vault annotations:
+    ```yaml
+    vault.hashicorp.com/agent-inject: "true"
+    vault.hashicorp.com/role: "k8s-scheduler"
+    vault.hashicorp.com/agent-inject-secret-env: "secret/data/k8s-scheduler/database"
+    ```
+  - Vault Agent runs as sidecar container
+  - Renders secrets to `/vault/secrets/env`
+  - Server sources this file on startup
+
+  **Installation**: Included with Vault Helm chart
+  ```bash
+  helm install vault hashicorp/vault \
+    --set injector.enabled=true
+  ```
+</ParamField>
+
+## Optional Dependencies
+
+Additional features and integrations.
+
+### Stripe
+
+<ParamField path="Stripe" type="billing" optional>
+  Payment processing and subscription management.
+
+  **Why**: Enables tiered billing (Free, Business, Enterprise)
+
+  **Integration points**:
+  - Server integrates with Stripe API for:
+    - Creating subscriptions
+    - Managing payment methods
+    - Handling upgrades/downgrades
+  - Webhook endpoint `/api/stripe/webhook` for events
+  - Tier limits enforced based on subscription status
+
+  **Configuration**:
+  ```bash
+  BILLING_ENABLED="true"
+  STRIPE_API_KEY="sk_live_..."
+  STRIPE_WEBHOOK_SECRET="whsec_..."
+  ```
+
+  **Required secrets**:
+  ```bash
+  vault kv put secret/k8s-scheduler/stripe \
+    api_key="sk_live_..." \
+    webhook_secret="whsec_..."
+  ```
+</ParamField>
+
+### SMTP / SendGrid
+
+<ParamField path="SMTP / SendGrid" type="email" optional>
+  Email delivery for team invitations.
+
+  **Why**: Send invitation emails when users invite team members
+
+  **Integration points**:
+  - Server sends emails via SMTP or SendGrid API
+  - Email templates for invitations
+  - Configurable sender address
+
+  **SMTP Configuration**:
+  ```bash
+  EMAIL_PROVIDER="smtp"
+  SMTP_HOST="smtp.gmail.com"
+  SMTP_PORT="587"
+  SMTP_USERNAME="user@example.com"
+  SMTP_PASSWORD="your-password"
+  ```
+
+  **SendGrid Configuration**:
+  ```bash
+  EMAIL_PROVIDER="sendgrid"
+  SENDGRID_API_KEY="SG.your-api-key"
+  ```
+</ParamField>
+
+### Redis
+
+<ParamField path="Redis" type="cache" optional>
+  In-memory data store for sessions.
+
+  **Version**: 6+
+
+  **Why**: Distributed session storage across multiple server replicas
+
+  **Integration points**:
+  - Server uses Redis as session backend when `SESSION_BACKEND=redis`
+  - Faster than PostgreSQL for session lookups
+  - Enables horizontal scaling of server pods
+
+  **Configuration**:
+  ```bash
+  SESSION_BACKEND="redis"
+  REDIS_ADDR="redis.redis.svc.cluster.local:6379"
+  ```
+
+  **Installation**:
+  ```bash
+  helm repo add bitnami https://charts.bitnami.com/bitnami
+  helm install redis bitnami/redis \
+    -n redis --create-namespace \
+    --set auth.enabled=false
+  ```
+
+  **Alternatives**: PostgreSQL sessions (`SESSION_BACKEND=postgres`)
+</ParamField>
+
+### Prometheus
+
+<ParamField path="Prometheus" type="monitoring" optional>
+  Metrics collection and alerting.
+
+  **Version**: v2.40+
+
+  **Why**: Monitor server and operator health, deployment metrics
+
+  **Integration points**:
+  - Server exposes metrics on `:9090/metrics`
+  - Operator exposes controller-runtime metrics
+  - Helm chart creates `ServiceMonitor` (requires Prometheus Operator)
+
+  **Metrics exposed**:
+  - `scheduler_deployments_total` - Total deployments created
+  - `scheduler_deployments_by_state` - Deployments by state (running/stopped)
+  - `scheduler_api_request_duration_seconds` - API latency
+  - Controller-runtime reconcile metrics
+
+  **Installation**:
+  ```bash
+  helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+  helm install prometheus prometheus-community/kube-prometheus-stack \
+    -n monitoring --create-namespace
+  ```
+
+  **Enable in k8s-scheduler**:
+  ```bash
+  helm install k8s-scheduler ./charts/k8s-scheduler \
+    --set monitoring.enabled=true
+  ```
+</ParamField>
+
+### Grafana
+
+<ParamField path="Grafana" type="observability" optional>
+  Metrics visualization and dashboards.
+
+  **Version**: v9+
+
+  **Why**: Visualize deployment metrics, server health, operator reconciliation loops
+
+  **Integration points**:
+  - Connects to Prometheus data source
+  - Pre-built dashboards (TODO: create these)
+  - Alerting for operator errors
+
+  **Installation**: Included with `kube-prometheus-stack`
+</ParamField>
+
+## Dependency Matrix
+
+| Component | Required | AWS | GCP | On-Prem | Notes |
+|-----------|----------|-----|-----|---------|-------|
+| **PostgreSQL** | Yes | RDS | Cloud SQL | Helm | Any managed or self-hosted |
+| **Traefik** | Yes | ✓ | ✓ | ✓ | Wildcard ingress routing |
+| **cert-manager** | Yes | ✓ | ✓ | ✓ | TLS certificates |
+| **External DNS** | Yes | ✓ | ✓ | ✓ | Automatic DNS records |
+| **Cloudflare** | Yes | ✓ | ✓ | ✓ | Or Route53, Cloud DNS, etc. |
+| **ALB Controller** | AWS only | ✓ | — | — | Server ingress on EKS |
+| **Vault** | Recommended | ✓ | ✓ | ✓ | Centralized secrets |
+| **External Secrets** | If Vault | ✓ | ✓ | ✓ | Syncs secrets to K8s |
+| **Vault Agent** | If Vault | ✓ | ✓ | ✓ | Injects server secrets |
+| **Stripe** | Optional | ✓ | ✓ | ✓ | Subscription billing |
+| **SMTP/SendGrid** | Optional | ✓ | ✓ | ✓ | Team invitations |
+| **Redis** | Optional | ElastiCache | Memorystore | Helm | Session storage |
+| **Prometheus** | Optional | ✓ | ✓ | ✓ | Metrics collection |
+| **Grafana** | Optional | ✓ | ✓ | ✓ | Metrics visualization |
+
+## Architecture Diagram
+
+```mermaid
+graph TB
+    subgraph "External Services"
+        CF[Cloudflare DNS]
+        VAULT[HashiCorp Vault]
+        STRIPE[Stripe API]
+        SMTP[SMTP/SendGrid]
+    end
+
+    subgraph "Kubernetes Cluster"
+        subgraph "Ingress Layer"
+            ALB[AWS ALB Controller]
+            TRAEFIK[Traefik]
+            CERT[cert-manager]
+            EXTDNS[External DNS]
+        end
+
+        subgraph "Application Layer"
+            SERVER[k8s-scheduler-server]
+            OPERATOR[k8s-scheduler-operator]
+        end
+
+        subgraph "Secrets Layer"
+            ESO[External Secrets Operator]
+            VAGENT[Vault Agent Injector]
+        end
+
+        subgraph "Data Layer"
+            PG[PostgreSQL]
+            REDIS[Redis]
+        end
+    end
+
+    SERVER --> PG
+    SERVER --> REDIS
+    SERVER --> VAULT
+    SERVER --> STRIPE
+    SERVER --> SMTP
+    
+    VAGENT -.injects.-> SERVER
+    OPERATOR --> ESO
+    ESO --> VAULT
+    
+    ALB --> SERVER
+    TRAEFIK --> OPERATOR
+    CERT --> TRAEFIK
+    EXTDNS --> CF
+    
+    VAULT --> CF
+    CERT --> CF
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Deployment Guide" icon="rocket" href="/k8s-scheduler/deployment-guide">
+    Deploy k8s-scheduler to production
+  </Card>
+  
+  <Card title="Configuration" icon="sliders" href="/k8s-scheduler/configuration">
+    Configure environment variables
+  </Card>
+</CardGroup>

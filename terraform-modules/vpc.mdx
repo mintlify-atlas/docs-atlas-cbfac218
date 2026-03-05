@@ -1,0 +1,423 @@
+---
+title: "VPC Module"
+description: "Complete AWS VPC infrastructure with public/private subnets, NAT gateways, and VPC endpoints"
+---
+
+## Overview
+
+The VPC module creates a complete AWS VPC infrastructure with public and private subnets across multiple availability zones, NAT gateways for outbound internet access, and optional VPC endpoints for S3 and DynamoDB.
+
+## Features
+
+<CardGroup cols={2}>
+  <Card title="Multi-AZ Support" icon="sitemap">
+    Deploy subnets across multiple availability zones for high availability
+  </Card>
+  
+  <Card title="Public & Private Subnets" icon="network-wired">
+    Separate public subnets with internet access and private subnets with NAT
+  </Card>
+  
+  <Card title="NAT Gateway Options" icon="server">
+    Single or multiple NAT gateways for cost vs. availability tradeoff
+  </Card>
+  
+  <Card title="VPC Endpoints" icon="plug">
+    Optional S3 and DynamoDB endpoints to reduce NAT costs
+  </Card>
+  
+  <Card title="Flow Logs" icon="chart-line">
+    Optional VPC flow logs for network monitoring and troubleshooting
+  </Card>
+  
+  <Card title="EKS Integration" icon="kubernetes">
+    Automatic subnet tagging for AWS Load Balancer Controller
+  </Card>
+</CardGroup>
+
+## Architecture
+
+### Multi-AZ with High Availability
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    VPC (10.0.0.0/16)                          │
+│                                                                │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
+│  │  AZ-1 (us-e-1a)  │  │  AZ-2 (us-e-1b)  │  │  AZ-3 (us-e-1c)  │ │
+│  │                 │  │                 │  │                 │ │
+│  │  ┌───────────┐  │  │  ┌───────────┐  │  │  ┌───────────┐  │ │
+│  │  │  Public    │  │  │  │  Public    │  │  │  │  Public    │  │ │
+│  │  │  Subnet    │  │  │  │  Subnet    │  │  │  │  Subnet    │  │ │
+│  │  │ 10.0.1/24 │◄────│  │ 10.0.2/24 │◄────│  │ 10.0.3/24 │  │ │
+│  │  └─────┬──────┘  │  │  └─────┬──────┘  │  │  └─────┬──────┘  │ │
+│  │       │NAT      │  │       │NAT      │  │       │NAT      │ │
+│  │  ┌─────┴──────┐  │  │  ┌─────┴──────┐  │  │  ┌─────┴──────┐  │ │
+│  │  │  Private   │  │  │  │  Private   │  │  │  │  Private   │  │ │
+│  │  │  Subnet    │  │  │  │  Subnet    │  │  │  │  Subnet    │  │ │
+│  │  │ 10.0.11/24│  │  │  │ 10.0.12/24│  │  │  │ 10.0.13/24│  │ │
+│  │  └───────────┘  │  │  └───────────┘  │  │  └───────────┘  │ │
+│  │                 │  │                 │  │                 │ │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
+│                                                                │
+│                     Internet Gateway                          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Usage Examples
+
+### Basic Configuration
+
+```hcl
+module "vpc" {
+  source = "git@github.com:opsnorth/terraform-modules.git//vpc?ref=v1.0.0"
+
+  vpc_name           = "my-vpc"
+  vpc_cidr           = "10.0.0.0/16"
+  aws_region         = "us-east-1"
+  availability_zones = ["us-east-1a", "us-east-1b", "us-east-1c"]
+
+  public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  private_subnet_cidrs = ["10.0.11.0/24", "10.0.12.0/24", "10.0.13.0/24"]
+
+  enable_nat_gateway = true
+  single_nat_gateway = false
+
+  tags = {
+    Environment = "production"
+    Team        = "platform"
+  }
+}
+```
+
+### Development Environment (Cost-Optimized)
+
+```hcl
+module "vpc" {
+  source = "git@github.com:opsnorth/terraform-modules.git//vpc?ref=v1.0.0"
+
+  vpc_name           = "dev-vpc"
+  vpc_cidr           = "10.0.0.0/16"
+  aws_region         = "us-west-2"
+  availability_zones = ["us-west-2a", "us-west-2b"]
+
+  public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24"]
+  private_subnet_cidrs = ["10.0.11.0/24", "10.0.12.0/24"]
+
+  enable_nat_gateway = true
+  single_nat_gateway = true  # Single NAT for cost savings
+
+  tags = {
+    Environment = "development"
+    ManagedBy   = "terraform"
+  }
+}
+```
+
+<Tip>
+Using `single_nat_gateway = true` in development can save ~$90/month by using one NAT gateway instead of one per AZ.
+</Tip>
+
+### Production Environment (High Availability)
+
+```hcl
+module "vpc" {
+  source = "git@github.com:opsnorth/terraform-modules.git//vpc?ref=v1.0.0"
+
+  vpc_name           = "prod-vpc"
+  vpc_cidr           = "10.0.0.0/16"
+  aws_region         = "us-east-1"
+  availability_zones = ["us-east-1a", "us-east-1b", "us-east-1c"]
+
+  public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  private_subnet_cidrs = ["10.0.11.0/24", "10.0.12.0/24", "10.0.13.0/24"]
+
+  enable_nat_gateway = true
+  single_nat_gateway = false  # NAT gateway per AZ for HA
+
+  # VPC endpoints to reduce NAT costs
+  enable_s3_endpoint       = true
+  enable_dynamodb_endpoint = true
+
+  # Flow logs for monitoring
+  enable_flow_logs             = true
+  flow_logs_destination_type   = "cloud-watch-logs"
+  flow_logs_destination_arn    = aws_cloudwatch_log_group.vpc_flow_logs.arn
+  flow_logs_iam_role_arn       = aws_iam_role.vpc_flow_logs.arn
+
+  tags = {
+    Environment = "production"
+    ManagedBy   = "terraform"
+    CostCenter  = "engineering"
+  }
+}
+
+resource "aws_cloudwatch_log_group" "vpc_flow_logs" {
+  name              = "/aws/vpc/flow-logs"
+  retention_in_days = 30
+}
+
+resource "aws_iam_role" "vpc_flow_logs" {
+  name = "vpc-flow-logs-role"
+  
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "vpc-flow-logs.amazonaws.com"
+      }
+    }]
+  })
+}
+```
+
+### EKS-Ready VPC
+
+Automatically tag subnets for AWS Load Balancer Controller:
+
+```hcl
+module "vpc" {
+  source = "git@github.com:opsnorth/terraform-modules.git//vpc?ref=v1.0.0"
+
+  vpc_name           = "eks-vpc"
+  vpc_cidr           = "10.0.0.0/16"
+  aws_region         = "us-east-1"
+  availability_zones = ["us-east-1a", "us-east-1b", "us-east-1c"]
+
+  public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  private_subnet_cidrs = ["10.0.11.0/24", "10.0.12.0/24", "10.0.13.0/24"]
+
+  # Automatically adds kubernetes.io/cluster/<name> and role tags
+  eks_cluster_name = "my-eks-cluster"
+
+  enable_nat_gateway = true
+  single_nat_gateway = false
+
+  tags = {
+    Environment = "production"
+  }
+}
+```
+
+<Info>
+When `eks_cluster_name` is set, the module adds:
+- `kubernetes.io/cluster/<name> = shared` to all subnets
+- `kubernetes.io/role/elb = 1` to public subnets
+- `kubernetes.io/role/internal-elb = 1` to private subnets
+</Info>
+
+### Minimal Configuration (Public Only)
+
+For simple use cases without private subnets:
+
+```hcl
+module "vpc" {
+  source = "git@github.com:opsnorth/terraform-modules.git//vpc?ref=v1.0.0"
+
+  vpc_name           = "simple-vpc"
+  vpc_cidr           = "10.0.0.0/16"
+  aws_region         = "us-east-1"
+  availability_zones = ["us-east-1a", "us-east-1b"]
+
+  public_subnet_cidrs = ["10.0.1.0/24", "10.0.2.0/24"]
+
+  enable_nat_gateway = false  # No NAT needed without private subnets
+
+  tags = {
+    Environment = "test"
+  }
+}
+```
+
+## Inputs
+
+| Name | Description | Type | Default | Required |
+|------|-------------|------|---------|:--------:|
+| `vpc_name` | Name to be used on all the resources as identifier | `string` | n/a | yes |
+| `vpc_cidr` | The CIDR block for the VPC | `string` | n/a | yes |
+| `aws_region` | AWS region where resources will be created | `string` | n/a | yes |
+| `availability_zones` | List of availability zones in which to create subnets | `list(string)` | n/a | yes |
+| `public_subnet_cidrs` | List of CIDR blocks for public subnets | `list(string)` | `[]` | no |
+| `private_subnet_cidrs` | List of CIDR blocks for private subnets | `list(string)` | `[]` | no |
+| `eks_cluster_name` | Optional EKS cluster name used to tag subnets for Kubernetes load balancers | `string` | `null` | no |
+| `enable_dns_hostnames` | Should be true to enable DNS hostnames in the VPC | `bool` | `true` | no |
+| `enable_dns_support` | Should be true to enable DNS support in the VPC | `bool` | `true` | no |
+| `create_igw` | Controls if an Internet Gateway is created for public subnets | `bool` | `true` | no |
+| `map_public_ip_on_launch` | Should be true to auto-assign public IP on launch | `bool` | `true` | no |
+| `enable_nat_gateway` | Should be true if you want to provision NAT Gateways for private subnets | `bool` | `true` | no |
+| `single_nat_gateway` | Should be true if you want to provision a single shared NAT Gateway | `bool` | `false` | no |
+| `enable_flow_logs` | Whether to enable VPC Flow Logs | `bool` | `false` | no |
+| `flow_logs_destination_type` | Type of flow log destination (cloud-watch-logs or s3) | `string` | `"cloud-watch-logs"` | no |
+| `flow_logs_destination_arn` | ARN of the destination for VPC Flow Logs | `string` | `""` | no |
+| `flow_logs_iam_role_arn` | ARN of the IAM role for VPC Flow Logs | `string` | `""` | no |
+| `flow_logs_traffic_type` | Type of traffic to capture (ACCEPT, REJECT, ALL) | `string` | `"ALL"` | no |
+| `manage_default_security_group` | Should be true to adopt and manage the default security group | `bool` | `true` | no |
+| `enable_s3_endpoint` | Should be true if you want to provision an S3 VPC endpoint | `bool` | `false` | no |
+| `enable_dynamodb_endpoint` | Should be true if you want to provision a DynamoDB VPC endpoint | `bool` | `false` | no |
+| `tags` | A map of tags to add to all resources | `map(string)` | `{}` | no |
+
+## Outputs
+
+| Name | Description |
+|------|-------------|
+| `vpc_id` | The ID of the VPC |
+| `vpc_arn` | The ARN of the VPC |
+| `vpc_cidr_block` | The CIDR block of the VPC |
+| `internet_gateway_id` | The ID of the Internet Gateway |
+| `public_subnet_ids` | List of IDs of public subnets |
+| `public_subnet_arns` | List of ARNs of public subnets |
+| `public_subnet_cidr_blocks` | List of CIDR blocks of public subnets |
+| `private_subnet_ids` | List of IDs of private subnets |
+| `private_subnet_arns` | List of ARNs of private subnets |
+| `private_subnet_cidr_blocks` | List of CIDR blocks of private subnets |
+| `nat_gateway_ids` | List of NAT Gateway IDs |
+| `nat_eip_public_ips` | List of public Elastic IPs created for NAT Gateways |
+| `public_route_table_ids` | List of IDs of public route tables |
+| `private_route_table_ids` | List of IDs of private route tables |
+| `vpc_flow_log_id` | The ID of the VPC Flow Log |
+| `default_security_group_id` | The ID of the default security group |
+| `vpc_endpoint_s3_id` | The ID of the S3 VPC endpoint |
+| `vpc_endpoint_dynamodb_id` | The ID of the DynamoDB VPC endpoint |
+| `availability_zones` | List of availability zones used |
+
+## Cost Considerations
+
+<AccordionGroup>
+  <Accordion title="NAT Gateway Costs">
+    **Hourly Charges:**
+    - Each NAT Gateway: ~$0.045/hour (~$32/month)
+    - Data processing: $0.045/GB
+
+    **Recommendations:**
+    - Development: Use `single_nat_gateway = true`
+    - Production: Use one NAT per AZ for HA
+    - Consider VPC endpoints to reduce NAT data transfer
+  </Accordion>
+
+  <Accordion title="VPC Endpoints">
+    **Gateway Endpoints (Free):**
+    - S3 and DynamoDB endpoints have no hourly charge
+    - Saves NAT data processing costs
+    - Enable in production to reduce costs
+
+    **Interface Endpoints:**
+    - Not included in this module
+    - ~$0.01/hour per AZ (~$7/month per endpoint)
+  </Accordion>
+
+  <Accordion title="Elastic IPs">
+    - NAT gateways include EIP allocation
+    - No charge while attached to running NAT gateway
+    - Small charge for unattached EIPs
+  </Accordion>
+
+  <Accordion title="Flow Logs">
+    - CloudWatch Logs: Storage + ingestion costs
+    - S3: Storage costs only
+    - Consider retention policies to manage costs
+  </Accordion>
+</AccordionGroup>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="CIDR Planning" icon="network-wired">
+    Use a VPC CIDR that allows for growth. A /16 (65,536 IPs) is recommended for most use cases.
+  </Card>
+  
+  <Card title="Multi-AZ" icon="sitemap">
+    Always use at least 2 AZs for development and 3 AZs for production workloads.
+  </Card>
+  
+  <Card title="Subnet Sizing" icon="calculator">
+    Public subnets can be smaller (/24 = 256 IPs). Private subnets should be larger for pod IP addresses.
+  </Card>
+  
+  <Card title="NAT Strategy" icon="server">
+    Development: Single NAT. Production: One NAT per AZ for resilience.
+  </Card>
+  
+  <Card title="VPC Endpoints" icon="plug">
+    Enable S3 and DynamoDB endpoints in production to save on NAT costs.
+  </Card>
+  
+  <Card title="Flow Logs" icon="chart-line">
+    Enable flow logs in production for security monitoring and troubleshooting.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Subnet CIDR Conflicts
+
+**Error:**
+```
+Error: Error creating subnet: InvalidSubnet.Conflict
+```
+
+**Solution:**
+Ensure subnet CIDRs don't overlap and are within the VPC CIDR:
+
+```hcl
+vpc_cidr = "10.0.0.0/16"
+
+# Valid - within VPC CIDR and non-overlapping
+public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24"]
+private_subnet_cidrs = ["10.0.11.0/24", "10.0.12.0/24"]
+```
+
+### NAT Gateway Attachment Issues
+
+**Error:**
+```
+Error: timeout while waiting for state to become 'available'
+```
+
+**Solution:**
+Ensure Internet Gateway is created and attached before NAT gateways. The module handles this dependency automatically.
+
+### EKS Subnet Discovery
+
+If EKS can't discover subnets:
+
+1. Verify `eks_cluster_name` matches your cluster name exactly
+2. Check that tags are present on subnets:
+   ```bash
+   aws ec2 describe-subnets --subnet-ids <subnet-id>
+   ```
+3. Ensure both public and private subnets have appropriate role tags
+
+### Flow Logs Not Working
+
+**Common issues:**
+- IAM role missing permissions
+- CloudWatch Log Group doesn't exist
+- IAM role trust policy incorrect
+
+**Verify IAM role:**
+```bash
+aws logs describe-log-groups --log-group-name-prefix /aws/vpc
+aws iam get-role --role-name vpc-flow-logs-role
+```
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="EKS Module" icon="kubernetes" href="/terraform-modules/eks">
+    Deploy EKS cluster in this VPC
+  </Card>
+  
+  <Card title="RDS Module" icon="database" href="/terraform-modules/rds">
+    Create RDS instances in private subnets
+  </Card>
+  
+  <Card title="EC2 Module" icon="server" href="/terraform-modules/ec2">
+    Launch EC2 instances in subnets
+  </Card>
+  
+  <Card title="Usage Guide" icon="book" href="/terraform-modules/usage">
+    Common patterns and best practices
+  </Card>
+</CardGroup>

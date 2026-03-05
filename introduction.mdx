@@ -1,0 +1,191 @@
+---
+title: "Welcome to Shipyard"
+description: "Infrastructure monorepo for multi-tenant Kubernetes deployments, Terraform modules, and AWS infrastructure-as-code"
+mode: "custom"
+---
+
+<div className="relative overflow-hidden bg-gradient-to-br from-[#1E3A8A] via-[#1E40AF] to-[#1E293B] dark:from-[#0f1117] dark:via-[#1E3A8A] dark:to-[#1E293B] py-20">
+  <div className="max-w-7xl mx-auto px-6 lg:px-8">
+    <div className="lg:grid lg:grid-cols-12 lg:gap-8 items-center">
+      <div className="lg:col-span-7">
+        <h1 className="text-5xl lg:text-6xl font-bold text-white mb-6">
+          Welcome to Shipyard
+        </h1>
+        <p className="text-xl text-gray-200 dark:text-gray-300 max-w-2xl mb-8">
+          A complete infrastructure monorepo with a multi-tenant Kubernetes deployment platform, reusable Terraform modules, and production-ready infrastructure-as-code for AWS.
+        </p>
+        <div className="flex flex-wrap gap-4">
+          <a
+            href="/quickstart"
+            className="inline-flex items-center justify-center px-6 py-3 text-base font-semibold text-white bg-[#3B82F6] hover:bg-[#2563EB] rounded-lg transition-colors"
+          >
+            Get Started
+          </a>
+          <a
+            href="/architecture"
+            className="inline-flex items-center justify-center px-6 py-3 text-base font-semibold text-white border border-white/30 bg-white/10 hover:bg-white/20 rounded-lg transition-colors"
+          >
+            Architecture Overview
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-4">
+    What's Inside
+  </h2>
+  <p className="text-base text-gray-600 dark:text-gray-400 mb-8">
+    Shipyard is a comprehensive infrastructure monorepo containing three major components
+  </p>
+
+  <CardGroup cols={3}>
+    <Card title="K8s Scheduler" icon="ship" href="/k8s-scheduler/overview">
+      Multi-tenant Kubernetes deployment platform with React frontend, OAuth, RBAC, and Stripe billing
+    </Card>
+    <Card title="Terraform Modules" icon="cube" href="/terraform-modules/introduction">
+      Production-ready modules for VPC, EKS, RDS, Vault, and more
+    </Card>
+    <Card title="Infrastructure" icon="server" href="/infrastructure/overview">
+      Three-tier deployment system with full AWS infrastructure automation
+    </Card>
+  </CardGroup>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-4">
+    Quick Start
+  </h2>
+  <p className="text-base text-gray-600 dark:text-gray-400 mb-8">
+    Get up and running in minutes with local development
+  </p>
+
+  <Steps>
+    <Step title="Clone the repository">
+      Clone the Shipyard monorepo to your local machine:
+      
+      ```bash
+      git clone https://github.com/ops-north/shipyard.git
+      cd shipyard
+      ```
+    </Step>
+
+    <Step title="Start local development environment">
+      Use the automated setup script to create a local Kind cluster with all dependencies:
+      
+      ```bash
+      cd k8s-scheduler
+      make dev-local
+      ```
+      
+      This command creates a Kind cluster, deploys PostgreSQL, builds container images, and launches both the server and operator.
+    </Step>
+
+    <Step title="Access the platform">
+      Open your browser and navigate to the local development server:
+      
+      ```bash
+      open http://localhost:8081
+      ```
+      
+      <Info>
+        In dev mode, you'll be automatically logged in as `dev@localhost` with no OAuth required.
+      </Info>
+    </Step>
+
+    <Step title="Explore the components">
+      <Accordion title="What gets deployed locally?">
+        - **PostgreSQL** - Database for users, orgs, teams, deployments
+        - **Server** (port 8081) - Go REST API with embedded React UI
+        - **Operator** - Kubernetes controller watching UserDeployment CRs
+        - **Kind cluster** - Local Kubernetes environment
+      </Accordion>
+    </Step>
+  </Steps>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-4">
+    Key Features
+  </h2>
+  <p className="text-base text-gray-600 dark:text-gray-400 mb-8">
+    Production-ready infrastructure components and deployment automation
+  </p>
+
+  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <div className="p-6 rounded-xl border border-gray-200 dark:border-[#27272a] bg-white dark:bg-[#1a1d27]">
+      <div className="flex items-center gap-3 mb-3">
+        <div className="p-2 rounded-lg bg-[#1E3A8A]/10 dark:bg-[#3B82F6]/10">
+          <svg className="w-5 h-5 text-[#1E3A8A] dark:text-[#3B82F6]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+          </svg>
+        </div>
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Multi-Tenancy & RBAC</h3>
+      </div>
+      <p className="text-sm text-gray-600 dark:text-gray-400">
+        Organization, team, and user-level access control with role-based permissions
+      </p>
+    </div>
+
+    <div className="p-6 rounded-xl border border-gray-200 dark:border-[#27272a] bg-white dark:bg-[#1a1d27]">
+      <div className="flex items-center gap-3 mb-3">
+        <div className="p-2 rounded-lg bg-[#1E3A8A]/10 dark:bg-[#3B82F6]/10">
+          <svg className="w-5 h-5 text-[#1E3A8A] dark:text-[#3B82F6]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+          </svg>
+        </div>
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">HashiCorp Vault Integration</h3>
+      </div>
+      <p className="text-sm text-gray-600 dark:text-gray-400">
+        Three-tier secrets management with External Secrets Operator for K8s injection
+      </p>
+    </div>
+
+    <div className="p-6 rounded-xl border border-gray-200 dark:border-[#27272a] bg-white dark:bg-[#1a1d27]">
+      <div className="flex items-center gap-3 mb-3">
+        <div className="p-2 rounded-lg bg-[#1E3A8A]/10 dark:bg-[#3B82F6]/10">
+          <svg className="w-5 h-5 text-[#1E3A8A] dark:text-[#3B82F6]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+          </svg>
+        </div>
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Reusable Terraform Modules</h3>
+      </div>
+      <p className="text-sm text-gray-600 dark:text-gray-400">
+        Battle-tested modules for VPC, EKS, RDS, Vault, and EC2 with complete documentation
+      </p>
+    </div>
+
+    <div className="p-6 rounded-xl border border-gray-200 dark:border-[#27272a] bg-white dark:bg-[#1a1d27]">
+      <div className="flex items-center gap-3 mb-3">
+        <div className="p-2 rounded-lg bg-[#1E3A8A]/10 dark:bg-[#3B82F6]/10">
+          <svg className="w-5 h-5 text-[#1E3A8A] dark:text-[#3B82F6]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+          </svg>
+        </div>
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Modern Tech Stack</h3>
+      </div>
+      <p className="text-sm text-gray-600 dark:text-gray-400">
+        React 19, Go 1.24, Kubernetes operator pattern, and controller-runtime
+      </p>
+    </div>
+  </div>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <div className="p-8 rounded-2xl border border-gray-200 dark:border-[#27272a] bg-gradient-to-br from-[#1E3A8A]/5 to-[#3B82F6]/5 dark:from-[#1E3A8A]/10 dark:to-[#3B82F6]/10">
+    <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-3">
+      Ready to Deploy?
+    </h2>
+    <p className="text-base text-gray-600 dark:text-gray-400 mb-6">
+      Follow our comprehensive deployment guide to set up the full infrastructure on AWS with Terraform.
+    </p>
+    <a
+      href="/infrastructure/overview"
+      className="inline-flex items-center justify-center px-6 py-3 text-base font-semibold text-white bg-[#1E3A8A] hover:bg-[#1E40AF] dark:bg-[#3B82F6] dark:hover:bg-[#2563EB] rounded-lg transition-colors"
+    >
+      View Deployment Guide
+    </a>
+  </div>
+</div>

@@ -1,0 +1,164 @@
+---
+title: Infrastructure Overview
+description: Understand Shipyard's three-tier Terraform architecture for AWS deployment
+---
+
+Shipyard uses a modular, three-tier Terraform architecture to provision and manage infrastructure on AWS. This layered approach ensures proper dependency management, maintainability, and safe deployments.
+
+## Three-Tier Architecture
+
+The infrastructure is divided into three layers, each building on the previous one:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              TERRAFORM LAYERS                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐         │
+│  │ 1-infrastructure│───▶│   2-platform    │───▶│    3-apps       │         │
+│  └─────────────────┘    └─────────────────┘    └─────────────────┘         │
+│         │                       │                      │                    │
+│         ▼                       ▼                      ▼                    │
+│  • VPC & Subnets         • ALB Controller       • ArgoCD                   │
+│  • EKS Cluster           • Cert Manager         • Traefik                  │
+│  • Tailscale (VPN)       • External Secrets     • App TLS Certs            │
+│  • Vault (KMS)           • Vault Helm           • Vault Policies           │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Layer 1: Infrastructure
+
+The foundation layer provisions core AWS infrastructure:
+
+- **VPC & Networking**: Virtual Private Cloud, subnets, NAT gateways
+- **EKS Cluster**: Kubernetes cluster and node groups
+- **Tailscale VPN**: Secure network access via subnet router
+- **Vault Infrastructure**: KMS keys and DynamoDB tables for secrets management
+
+### Layer 2: Platform
+
+The platform layer deploys essential Kubernetes components:
+
+- **AWS Load Balancer Controller**: Manages ALBs for ingress
+- **Cert Manager**: Automated TLS certificate management
+- **External Secrets Operator**: Syncs secrets from Vault to Kubernetes
+- **Vault Helm**: Deploys Vault server on Kubernetes
+
+### Layer 3: Apps
+
+The applications layer deploys user-facing services:
+
+- **ArgoCD**: GitOps continuous delivery
+- **Traefik**: Ingress controller and routing
+- **Application TLS Certificates**: Automated cert provisioning
+- **Vault Policies**: Application-specific access controls
+
+## Layer Dependencies
+
+Each layer depends on outputs from the previous layer:
+
+```
+bootstrap
+    │
+    ▼
+1-infrastructure ──────────────────┐
+    │                              │
+    │ Outputs:                     │
+    │ • vpc_id                     │
+    │ • private_subnet_ids         │
+    │ • eks_cluster_endpoint       │
+    │ • eks_cluster_name           │
+    │ • vault_kms_key_id           │
+    │                              │
+    ▼                              │
+2-platform ◀───────────────────────┘
+    │
+    │ Outputs:
+    │ • vault_addr
+    │ • cert_manager_ready
+    │
+    ▼
+3-apps
+```
+
+## Directory Structure
+
+The Terraform code is organized as follows:
+
+```
+terraform/dev/
+├── bootstrap/                    # State bucket & DynamoDB table
+│   ├── main.tf
+│   ├── variables.tf
+│   ├── outputs.tf
+│   └── post-bootstrap.sh         # Updates backend configs after bootstrap
+│
+├── 1-infrastructure/             # Core AWS infrastructure
+│   ├── backend.tf
+│   ├── main.tf
+│   ├── variables.tf
+│   ├── outputs.tf
+│   ├── terraform.tfvars
+│   ├── vpc.tf                    # VPC, subnets, NAT gateways
+│   ├── eks.tf                    # EKS cluster & node groups
+│   ├── tailscale.tf              # Tailscale subnet router
+│   └── vault.tf                  # Vault infrastructure (KMS, DynamoDB)
+│
+├── 2-platform/                   # Kubernetes platform components
+│   ├── backend.tf
+│   ├── providers.tf
+│   ├── variables.tf
+│   ├── outputs.tf
+│   ├── alb-controller.tf         # AWS Load Balancer Controller
+│   ├── cert-manager.tf           # Certificate management
+│   ├── external-secrets.tf       # External Secrets Operator
+│   ├── vault-helm.tf             # Vault Helm deployment
+│   ├── policies/
+│   │   └── aws-load-balancer-controller-policy.json
+│   └── scripts/
+│       └── vault-bootstrap.sh    # Vault initialization script
+│
+└── 3-apps/                       # Application layer
+    ├── backend.tf
+    ├── providers.tf
+    ├── variables.tf
+    ├── outputs.tf
+    ├── argocd.tf                 # ArgoCD deployment
+    ├── argocd-appset.tf          # ApplicationSets
+    ├── argocd-ingress.tf         # ArgoCD ingress
+    ├── traefik.tf                # Traefik ingress controller
+    ├── ebs-csi.tf                # EBS CSI driver
+    ├── applications-tls.tf       # Application TLS certificates
+    └── vault-roles-policies.tf   # Vault policies for apps
+```
+
+## Deployment Flow
+
+The complete deployment follows this sequence:
+
+<Steps>
+  <Step title="Bootstrap">
+    Create S3 bucket and DynamoDB table for Terraform state management
+  </Step>
+  <Step title="Infrastructure Layer">
+    Deploy VPC, EKS cluster, Tailscale VPN, and Vault infrastructure
+  </Step>
+  <Step title="Platform Layer">
+    Install Kubernetes platform components and initialize Vault
+  </Step>
+  <Step title="Apps Layer">
+    Deploy ArgoCD, Traefik, and application configurations
+  </Step>
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Prerequisites" icon="list-check" href="/infrastructure/prerequisites">
+    Set up required tools and accounts
+  </Card>
+  <Card title="Bootstrap" icon="rocket" href="/infrastructure/bootstrap">
+    Initialize Terraform state backend
+  </Card>
+</CardGroup>

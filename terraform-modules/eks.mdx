@@ -1,0 +1,476 @@
+---
+title: "EKS Module"
+description: "Amazon EKS cluster with managed node groups, OIDC provider for IRSA, and IAM roles"
+---
+
+## Overview
+
+The EKS module creates a production-ready Amazon EKS (Elastic Kubernetes Service) cluster with a managed node group, IAM roles with required policies, and an OIDC provider for IAM Roles for Service Accounts (IRSA).
+
+## Features
+
+<CardGroup cols={2}>
+  <Card title="Managed Node Groups" icon="cubes">
+    Auto-scaling node groups with configurable instance types and capacity
+  </Card>
+  
+  <Card title="OIDC Provider" icon="fingerprint">
+    Automatic OIDC setup for IRSA (IAM Roles for Service Accounts)
+  </Card>
+  
+  <Card title="IAM Roles" icon="shield-halved">
+    Pre-configured cluster and node group IAM roles with required policies
+  </Card>
+  
+  <Card title="Control Plane Logging" icon="file-lines">
+    Optional CloudWatch logging for API server, audit, and other components
+  </Card>
+  
+  <Card title="Private Endpoint" icon="lock">
+    Cluster endpoint accessible only within VPC by default
+  </Card>
+  
+  <Card title="Multi-AZ Support" icon="sitemap">
+    Node groups deployed across multiple availability zones
+  </Card>
+</CardGroup>
+
+## Usage Examples
+
+### Basic Configuration
+
+```hcl
+module "eks" {
+  source = "git@github.com:opsnorth/terraform-modules.git//eks?ref=v1.0.0"
+
+  cluster_name       = "dev-eks-cluster"
+  kubernetes_version = "1.34"
+  private_subnet_ids = module.vpc.private_subnet_ids
+
+  primary_node_group_instance_types = ["m5.large"]
+  primary_node_group_desired_size   = 2
+  primary_node_group_min_size       = 1
+  primary_node_group_max_size       = 3
+
+  tags = {
+    Environment = "dev"
+  }
+}
+```
+
+### Production Configuration
+
+```hcl
+module "eks" {
+  source = "git@github.com:opsnorth/terraform-modules.git//eks?ref=v1.0.0"
+
+  cluster_name       = "prod-eks-cluster"
+  kubernetes_version = "1.34"
+  private_subnet_ids = module.vpc.private_subnet_ids
+
+  # Enable all control plane logs
+  cluster_log_types = [
+    "api",
+    "audit",
+    "authenticator",
+    "controllerManager",
+    "scheduler"
+  ]
+
+  # Production-sized nodes
+  primary_node_group_instance_types = ["m5.xlarge", "m5.2xlarge"]
+  primary_node_group_capacity_type  = "ON_DEMAND"
+  primary_node_group_desired_size   = 3
+  primary_node_group_min_size       = 3
+  primary_node_group_max_size       = 10
+  primary_node_group_disk_size      = 100
+
+  # Node labels for workload placement
+  primary_node_group_labels = {
+    "workload" = "general"
+    "tier"     = "production"
+  }
+
+  tags = {
+    Environment = "production"
+    CostCenter  = "engineering"
+  }
+}
+```
+
+### With VPC Module
+
+Compose with the VPC module:
+
+```hcl
+module "vpc" {
+  source = "git@github.com:opsnorth/terraform-modules.git//vpc?ref=v1.0.0"
+
+  vpc_name           = "eks-vpc"
+  vpc_cidr           = "10.0.0.0/16"
+  aws_region         = "us-east-1"
+  availability_zones = ["us-east-1a", "us-east-1b", "us-east-1c"]
+
+  public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  private_subnet_cidrs = ["10.0.11.0/24", "10.0.12.0/24", "10.0.13.0/24"]
+
+  eks_cluster_name = "my-eks-cluster"
+}
+
+module "eks" {
+  source = "git@github.com:opsnorth/terraform-modules.git//eks?ref=v1.0.0"
+
+  cluster_name       = "my-eks-cluster"
+  kubernetes_version = "1.34"
+  private_subnet_ids = module.vpc.private_subnet_ids
+}
+```
+
+### Spot Instances for Cost Savings
+
+```hcl
+module "eks" {
+  source = "git@github.com:opsnorth/terraform-modules.git//eks?ref=v1.0.0"
+
+  cluster_name       = "dev-eks-cluster"
+  kubernetes_version = "1.34"
+  private_subnet_ids = module.vpc.private_subnet_ids
+
+  # Use Spot instances for non-production
+  primary_node_group_capacity_type = "SPOT"
+  
+  # Multiple instance types for better Spot availability
+  primary_node_group_instance_types = [
+    "m5.large",
+    "m5a.large",
+    "m5n.large"
+  ]
+
+  primary_node_group_desired_size = 2
+  primary_node_group_min_size     = 1
+  primary_node_group_max_size     = 5
+
+  tags = {
+    Environment = "dev"
+  }
+}
+```
+
+<Warning>
+Spot instances can be interrupted with 2-minute notice. Only use for fault-tolerant workloads or non-production environments.
+</Warning>
+
+## Connecting to the Cluster
+
+### Update kubeconfig
+
+```bash
+aws eks update-kubeconfig \
+  --region us-east-1 \
+  --name my-eks-cluster
+```
+
+### Verify Connection
+
+```bash
+kubectl get nodes
+kubectl get pods -A
+```
+
+### Using Terraform Output
+
+```hcl
+output "configure_kubectl" {
+  value = "aws eks update-kubeconfig --region ${var.aws_region} --name ${module.eks.cluster_id}"
+}
+```
+
+## IRSA (IAM Roles for Service Accounts)
+
+The module automatically creates an OIDC provider for IRSA:
+
+### Creating an IRSA Role
+
+```hcl
+data "aws_iam_policy_document" "irsa_assume_role" {
+  statement {
+    effect = "Allow"
+
+    principals {
+      type        = "Federated"
+      identifiers = [module.eks.oidc_provider_arn]
+    }
+
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "${replace(module.eks.oidc_provider_url, "https://", "")}:sub"
+      values   = ["system:serviceaccount:my-namespace:my-service-account"]
+    }
+  }
+}
+
+resource "aws_iam_role" "irsa_role" {
+  name               = "my-app-irsa-role"
+  assume_role_policy = data.aws_iam_policy_document.irsa_assume_role.json
+}
+
+resource "aws_iam_role_policy_attachment" "irsa_policy" {
+  role       = aws_iam_role.irsa_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"
+}
+```
+
+### Kubernetes Service Account
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: my-service-account
+  namespace: my-namespace
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/my-app-irsa-role
+```
+
+### Using in a Pod
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-app
+  namespace: my-namespace
+spec:
+  serviceAccountName: my-service-account
+  containers:
+  - name: app
+    image: my-app:latest
+    # Pod automatically receives AWS credentials via IRSA
+```
+
+<Info>
+IRSA provides temporary AWS credentials to pods without needing to store access keys. This is the recommended approach for AWS access from EKS.
+</Info>
+
+## Inputs
+
+| Name | Description | Type | Default | Required |
+|------|-------------|------|---------|:--------:|
+| `cluster_name` | Name of the EKS cluster | `string` | n/a | yes |
+| `kubernetes_version` | Kubernetes version | `string` | `"1.28"` | no |
+| `private_subnet_ids` | Private subnet IDs (minimum 3 for HA) | `list(string)` | n/a | yes |
+| `cluster_log_types` | Control plane log types to enable | `list(string)` | `["api", "audit", "authenticator", "controllerManager", "scheduler"]` | no |
+| `primary_node_group_instance_types` | Instance types for the node group | `list(string)` | `["m5.large"]` | no |
+| `primary_node_group_capacity_type` | ON_DEMAND or SPOT | `string` | `"ON_DEMAND"` | no |
+| `primary_node_group_disk_size` | Disk size in GB | `number` | `20` | no |
+| `primary_node_group_desired_size` | Desired node count | `number` | `2` | no |
+| `primary_node_group_min_size` | Minimum node count | `number` | `2` | no |
+| `primary_node_group_max_size` | Maximum node count | `number` | `2` | no |
+| `primary_node_group_labels` | Labels for the node group | `map(string)` | `{}` | no |
+| `cluster_security_group_ids` | Additional security group IDs | `list(string)` | `[]` | no |
+| `tags` | Tags to apply to all resources | `map(string)` | `{}` | no |
+
+## Outputs
+
+| Name | Description |
+|------|-------------|
+| `cluster_id` | The name/id of the EKS cluster |
+| `cluster_arn` | The ARN of the EKS cluster |
+| `cluster_endpoint` | Endpoint for EKS control plane |
+| `cluster_version` | The Kubernetes version |
+| `cluster_security_group_id` | Security group ID of the cluster |
+| `cluster_certificate_authority_data` | Base64 encoded certificate data (sensitive) |
+| `cluster_iam_role_arn` | IAM role ARN of the cluster |
+| `node_group_iam_role_arn` | IAM role ARN of the node group |
+| `primary_node_group_id` | Node group ID |
+| `primary_node_group_arn` | Node group ARN |
+| `oidc_provider_url` | OIDC provider URL (for IRSA) |
+| `oidc_provider_arn` | OIDC provider ARN (for IRSA) |
+
+## Design Decisions
+
+<AccordionGroup>
+  <Accordion title="Private Endpoint Only">
+    The cluster endpoint is only accessible within the VPC (`endpoint_public_access = false`). Access requires:
+    - VPN connection to VPC
+    - Bastion host in public subnet
+    - AWS Cloud9 environment
+    - EC2 instance with kubectl
+
+    This prevents unauthorized access to the Kubernetes API.
+  </Accordion>
+
+  <Accordion title="Managed Node Groups">
+    The module uses managed node groups instead of self-managed nodes or Fargate:
+    - **Pros:** Automatic updates, simplified management, integrated autoscaling
+    - **Cons:** Less customization than self-managed nodes
+    
+    For advanced use cases, consider creating additional node groups outside the module.
+  </Accordion>
+
+  <Accordion title="Minimum 3 Subnets">
+    The module enforces a minimum of 3 private subnets for:
+    - High availability across multiple AZs
+    - EKS control plane requirements
+    - Better pod distribution
+
+    Validation error occurs if fewer than 3 subnets are provided.
+  </Accordion>
+
+  <Accordion title="OIDC Provider">
+    The OIDC provider is created automatically to enable IRSA. This is required for:
+    - AWS Load Balancer Controller
+    - External Secrets Operator
+    - EBS CSI Driver
+    - Any workload needing AWS API access
+  </Accordion>
+</AccordionGroup>
+
+## Post-Deployment Setup
+
+### Install Essential Add-ons
+
+<Tabs>
+  <Tab title="AWS Load Balancer Controller">
+    ```bash
+    # Install using Helm
+    helm repo add eks https://aws.github.io/eks-charts
+    
+    helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+      -n kube-system \
+      --set clusterName=my-eks-cluster \
+      --set serviceAccount.create=true \
+      --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=<IRSA_ROLE_ARN>
+    ```
+  </Tab>
+
+  <Tab title="EBS CSI Driver">
+    ```bash
+    # Install using EKS add-on
+    aws eks create-addon \
+      --cluster-name my-eks-cluster \
+      --addon-name aws-ebs-csi-driver \
+      --service-account-role-arn <IRSA_ROLE_ARN>
+    ```
+  </Tab>
+
+  <Tab title="Cluster Autoscaler">
+    ```bash
+    helm repo add autoscaler https://kubernetes.github.io/autoscaler
+    
+    helm install cluster-autoscaler autoscaler/cluster-autoscaler \
+      --namespace kube-system \
+      --set autoDiscovery.clusterName=my-eks-cluster \
+      --set awsRegion=us-east-1
+    ```
+  </Tab>
+</Tabs>
+
+## Troubleshooting
+
+### Cannot Connect to Cluster
+
+**Error:**
+```
+Error: You must be logged in to the server (Unauthorized)
+```
+
+**Solution:**
+Update your kubeconfig:
+```bash
+aws eks update-kubeconfig --region us-east-1 --name my-eks-cluster
+```
+
+Verify IAM user/role has access:
+```bash
+aws eks describe-cluster --name my-eks-cluster --region us-east-1
+```
+
+### Node Group Not Scaling
+
+**Check Cluster Autoscaler logs:**
+```bash
+kubectl logs -n kube-system -l app=cluster-autoscaler
+```
+
+**Verify node group settings:**
+```bash
+aws eks describe-nodegroup \
+  --cluster-name my-eks-cluster \
+  --nodegroup-name primary-node-group
+```
+
+### IRSA Not Working
+
+**Verify OIDC provider:**
+```bash
+aws eks describe-cluster \
+  --name my-eks-cluster \
+  --query "cluster.identity.oidc.issuer" \
+  --output text
+
+aws iam list-open-id-connect-providers
+```
+
+**Check service account annotations:**
+```bash
+kubectl describe serviceaccount -n my-namespace my-service-account
+```
+
+**Test IAM role assumption:**
+```bash
+kubectl run test --rm -it --image=amazon/aws-cli \
+  --serviceaccount=my-service-account \
+  --namespace=my-namespace \
+  -- aws sts get-caller-identity
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use Latest Kubernetes Version" icon="clock">
+    Keep clusters updated to the latest supported version for security patches and features.
+  </Card>
+  
+  <Card title="Enable Control Plane Logging" icon="file-lines">
+    Enable all log types in production for audit trails and troubleshooting.
+  </Card>
+  
+  <Card title="Right-Size Nodes" icon="gauge-high">
+    Start with smaller instances and scale up based on actual usage metrics.
+  </Card>
+  
+  <Card title="Use IRSA" icon="fingerprint">
+    Always use IRSA instead of instance profiles or hardcoded credentials.
+  </Card>
+  
+  <Card title="Multi-AZ Deployment" icon="sitemap">
+    Deploy node groups across at least 3 availability zones for resilience.
+  </Card>
+  
+  <Card title="Resource Quotas" icon="scale-balanced">
+    Implement Kubernetes resource quotas to prevent resource exhaustion.
+  </Card>
+</CardGroup>
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="VPC Module" icon="network-wired" href="/terraform-modules/vpc">
+    Create VPC with subnets for EKS
+  </Card>
+  
+  <Card title="Vault Module" icon="vault" href="/terraform-modules/vault">
+    Deploy Vault with IRSA
+  </Card>
+  
+  <Card title="K8s Scheduler Deployment" icon="ship" href="/k8s-scheduler/deployment-guide">
+    Deploy K8s Scheduler on EKS
+  </Card>
+  
+  <Card title="Infrastructure Guide" icon="book" href="/infrastructure/overview">
+    Complete infrastructure deployment
+  </Card>
+</CardGroup>

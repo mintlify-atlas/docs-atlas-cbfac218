@@ -1,0 +1,439 @@
+---
+title: "Terraform Modules"
+description: "Production-ready Terraform modules for AWS infrastructure including VPC, EKS, RDS, Vault, EC2, and state management"
+---
+
+## Overview
+
+The Shipyard Terraform modules are battle-tested, reusable infrastructure components designed for AWS. Each module follows best practices for security, high availability, and cost optimization.
+
+## Available Modules
+
+<CardGroup cols={2}>
+  <Card title="VPC" icon="network-wired" href="/terraform-modules/vpc">
+    Complete VPC with public/private subnets, NAT gateways, and VPC endpoints
+  </Card>
+  
+  <Card title="EKS" icon="kubernetes" href="/terraform-modules/eks">
+    Amazon EKS cluster with managed node groups, OIDC provider, and IAM roles
+  </Card>
+  
+  <Card title="RDS" icon="database" href="/terraform-modules/rds">
+    PostgreSQL/MySQL RDS instances with security groups and automated backups
+  </Card>
+  
+  <Card title="Vault" icon="vault" href="/terraform-modules/vault">
+    HashiCorp Vault AWS resources with KMS auto-unseal and DynamoDB backend
+  </Card>
+  
+  <Card title="EC2" icon="server" href="/terraform-modules/ec2">
+    EC2 instances with optional ALB, Tailscale, and HTTPS support
+  </Card>
+  
+  <Card title="State" icon="folder" href="/terraform-modules/state">
+    S3 and DynamoDB for Terraform remote state with locking
+  </Card>
+</CardGroup>
+
+## Quick Start
+
+### Using a Module
+
+Reference modules directly from GitHub:
+
+```hcl
+module "vpc" {
+  source = "git@github.com:opsnorth/terraform-modules.git//vpc?ref=v1.0.0"
+
+  vpc_name           = "production-vpc"
+  vpc_cidr           = "10.0.0.0/16"
+  aws_region         = "us-east-1"
+  availability_zones = ["us-east-1a", "us-east-1b", "us-east-1c"]
+
+  public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  private_subnet_cidrs = ["10.0.11.0/24", "10.0.12.0/24", "10.0.13.0/24"]
+
+  enable_nat_gateway = true
+  single_nat_gateway = false
+
+  tags = {
+    Environment = "production"
+    Team        = "platform"
+  }
+}
+```
+
+### Module Versioning
+
+All modules support Git ref-based versioning:
+
+```hcl
+# Use a specific version tag
+source = "git@github.com:opsnorth/terraform-modules.git//vpc?ref=v1.0.0"
+
+# Use a branch
+source = "git@github.com:opsnorth/terraform-modules.git//vpc?ref=main"
+
+# Use a commit SHA
+source = "git@github.com:opsnorth/terraform-modules.git//vpc?ref=abc123"
+```
+
+<Tip>
+Always pin to specific version tags in production to ensure reproducible deployments.
+</Tip>
+
+## Module Organization
+
+Each module follows a consistent structure:
+
+```
+terraform-modules/
+├── vpc/
+│   ├── main.tf           # Primary resources
+│   ├── variables.tf      # Input variables
+│   ├── outputs.tf        # Output values
+│   ├── versions.tf       # Provider requirements
+│   └── README.md         # Module documentation
+├── eks/
+│   ├── main.tf
+│   ├── variables.tf
+│   ├── outputs.tf
+│   └── README.md
+└── ...
+```
+
+## Common Patterns
+
+### Composing Modules
+
+Modules are designed to work together:
+
+```hcl
+# Create VPC
+module "vpc" {
+  source = "git@github.com:opsnorth/terraform-modules.git//vpc?ref=v1.0.0"
+  
+  vpc_name           = "production"
+  vpc_cidr           = "10.0.0.0/16"
+  aws_region         = "us-east-1"
+  availability_zones = ["us-east-1a", "us-east-1b", "us-east-1c"]
+  
+  public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  private_subnet_cidrs = ["10.0.11.0/24", "10.0.12.0/24", "10.0.13.0/24"]
+}
+
+# Create EKS cluster in the VPC
+module "eks" {
+  source = "git@github.com:opsnorth/terraform-modules.git//eks?ref=v1.0.0"
+  
+  cluster_name       = "production-eks"
+  kubernetes_version = "1.34"
+  private_subnet_ids = module.vpc.private_subnet_ids
+}
+
+# Create RDS instance in the VPC
+module "rds" {
+  source = "git@github.com:opsnorth/terraform-modules.git//rds?ref=v1.0.0"
+  
+  identifier = "production-db"
+  vpc_id     = module.vpc.vpc_id
+  subnet_ids = module.vpc.private_subnet_ids
+  
+  allowed_security_group_ids = [module.eks.cluster_security_group_id]
+}
+```
+
+### Using Outputs
+
+Modules expose outputs for cross-module references:
+
+```hcl
+# VPC outputs
+output "vpc_id" {
+  value = module.vpc.vpc_id
+}
+
+output "private_subnet_ids" {
+  value = module.vpc.private_subnet_ids
+}
+
+# EKS outputs
+output "cluster_endpoint" {
+  value = module.eks.cluster_endpoint
+}
+
+output "oidc_provider_arn" {
+  value = module.eks.oidc_provider_arn
+}
+```
+
+## Requirements
+
+### Terraform Version
+
+All modules require Terraform >= 1.0:
+
+```hcl
+terraform {
+  required_version = ">= 1.0"
+  
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = ">= 5.0"
+    }
+  }
+}
+```
+
+### AWS Provider
+
+Configure the AWS provider in your root module:
+
+```hcl
+provider "aws" {
+  region = "us-east-1"
+  
+  default_tags {
+    tags = {
+      Terraform   = "true"
+      Environment = "production"
+      Project     = "shipyard"
+    }
+  }
+}
+```
+
+### AWS Credentials
+
+Set AWS credentials using one of these methods:
+
+<Tabs>
+  <Tab title="Environment Variables">
+    ```bash
+    export AWS_ACCESS_KEY_ID="your-access-key"
+    export AWS_SECRET_ACCESS_KEY="your-secret-key"
+    export AWS_REGION="us-east-1"
+    ```
+  </Tab>
+
+  <Tab title="AWS CLI Profile">
+    ```bash
+    export AWS_PROFILE="production"
+    ```
+
+    ```hcl
+    provider "aws" {
+      profile = "production"
+      region  = "us-east-1"
+    }
+    ```
+  </Tab>
+
+  <Tab title="IAM Role (Recommended)">
+    Use IAM roles with EC2 instances, ECS tasks, or GitHub Actions:
+
+    ```hcl
+    provider "aws" {
+      region = "us-east-1"
+      # Automatically uses IAM role credentials
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Module Features
+
+### Security Best Practices
+
+<AccordionGroup>
+  <Accordion title="Encryption at Rest">
+    - RDS: Encrypted storage by default
+    - EBS: Encrypted root volumes
+    - S3: Server-side encryption (AES256)
+    - DynamoDB: Encryption enabled
+  </Accordion>
+
+  <Accordion title="Network Security">
+    - VPC: Private subnets for workloads
+    - Security Groups: Least privilege rules
+    - NetworkPolicies: Kubernetes network segmentation
+    - VPC Flow Logs: Optional traffic logging
+  </Accordion>
+
+  <Accordion title="Access Control">
+    - IAM: Least privilege roles and policies
+    - IRSA: EKS workload identity
+    - KMS: Customer-managed encryption keys
+    - Secrets: Vault integration for sensitive data
+  </Accordion>
+
+  <Accordion title="High Availability">
+    - Multi-AZ: Resources across availability zones
+    - RDS: Multi-AZ deployment option
+    - EKS: Node groups in multiple subnets
+    - NAT: Multiple NAT gateways for redundancy
+  </Accordion>
+</AccordionGroup>
+
+### Cost Optimization
+
+<CardGroup cols={2}>
+  <Card title="Development" icon="flask">
+    - Single NAT gateway
+    - t3.micro/t3.small instances
+    - Single-AZ RDS
+    - gp2 storage
+  </Card>
+  
+  <Card title="Production" icon="building">
+    - Multi-AZ NAT gateways
+    - Production instance sizes
+    - Multi-AZ RDS
+    - gp3 storage with provisioned IOPS
+  </Card>
+</CardGroup>
+
+## Complete Example
+
+Here's a complete infrastructure setup using multiple modules:
+
+```hcl
+terraform {
+  required_version = ">= 1.0"
+  
+  backend "s3" {
+    bucket         = "my-terraform-state"
+    key            = "production/terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "terraform-state-lock"
+    encrypt        = true
+  }
+}
+
+provider "aws" {
+  region = "us-east-1"
+}
+
+# State backend
+module "state" {
+  source = "git@github.com:opsnorth/terraform-modules.git//state?ref=v1.0.0"
+  
+  environment = "production"
+}
+
+# VPC
+module "vpc" {
+  source = "git@github.com:opsnorth/terraform-modules.git//vpc?ref=v1.0.0"
+  
+  vpc_name           = "production-vpc"
+  vpc_cidr           = "10.0.0.0/16"
+  aws_region         = "us-east-1"
+  availability_zones = ["us-east-1a", "us-east-1b", "us-east-1c"]
+  
+  public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  private_subnet_cidrs = ["10.0.11.0/24", "10.0.12.0/24", "10.0.13.0/24"]
+  
+  enable_nat_gateway = true
+  single_nat_gateway = false
+  
+  enable_s3_endpoint       = true
+  enable_dynamodb_endpoint = true
+}
+
+# EKS
+module "eks" {
+  source = "git@github.com:opsnorth/terraform-modules.git//eks?ref=v1.0.0"
+  
+  cluster_name       = "production-eks"
+  kubernetes_version = "1.34"
+  private_subnet_ids = module.vpc.private_subnet_ids
+  
+  primary_node_group_instance_types = ["m5.large"]
+  primary_node_group_desired_size   = 3
+  primary_node_group_min_size       = 3
+  primary_node_group_max_size       = 10
+}
+
+# RDS
+module "rds" {
+  source = "git@github.com:opsnorth/terraform-modules.git//rds?ref=v1.0.0"
+  
+  identifier = "production-db"
+  db_name    = "appdb"
+  username   = "admin"
+  
+  vpc_id     = module.vpc.vpc_id
+  subnet_ids = module.vpc.private_subnet_ids
+  
+  instance_class    = "db.t3.medium"
+  allocated_storage = 100
+  
+  multi_az                      = true
+  backup_retention_period       = 30
+  performance_insights_enabled  = true
+  
+  allowed_security_group_ids = [module.eks.cluster_security_group_id]
+}
+
+# Vault
+module "vault" {
+  source = "git@github.com:opsnorth/terraform-modules.git//vault?ref=v1.0.0"
+  
+  cluster_name      = "production-eks"
+  environment       = "production"
+  oidc_provider_arn = module.eks.oidc_provider_arn
+  oidc_provider_url = module.eks.oidc_provider_url
+}
+
+outputs {
+  vpc_id              = module.vpc.vpc_id
+  eks_cluster_name    = module.eks.cluster_id
+  rds_endpoint        = module.rds.db_instance_endpoint
+  vault_kms_key_id    = module.vault.kms_key_id
+}
+```
+
+## Getting Help
+
+<CardGroup cols={2}>
+  <Card title="Module Documentation" icon="book">
+    Each module has detailed README with examples, inputs, and outputs
+  </Card>
+  
+  <Card title="GitHub Issues" icon="github">
+    Report bugs or request features in the repository
+  </Card>
+  
+  <Card title="Terraform Docs" icon="file-lines">
+    Official Terraform documentation for advanced usage
+  </Card>
+  
+  <Card title="AWS Documentation" icon="aws">
+    AWS service documentation for resource details
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<Steps>
+  <Step title="Choose Your Modules">
+    Review the available modules and identify which ones you need for your infrastructure
+  </Step>
+
+  <Step title="Set Up State Backend">
+    Create the state backend using the [State module](/terraform-modules/state) before deploying other resources
+  </Step>
+
+  <Step title="Deploy Core Infrastructure">
+    Start with [VPC](/terraform-modules/vpc) and [EKS](/terraform-modules/eks) for the foundation
+  </Step>
+
+  <Step title="Add Data Layer">
+    Deploy [RDS](/terraform-modules/rds) for databases and [Vault](/terraform-modules/vault) for secrets management
+  </Step>
+
+  <Step title="Review Examples">
+    Check the full infrastructure deployment guide in [Infrastructure Overview](/infrastructure/overview)
+  </Step>
+</Steps>

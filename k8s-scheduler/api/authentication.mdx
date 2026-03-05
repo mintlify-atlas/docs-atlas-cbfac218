@@ -1,0 +1,207 @@
+---
+title: Authentication
+description: OAuth and session management endpoints
+---
+
+The K8s Scheduler API uses OAuth 2.0 for authentication with Google as the identity provider. After successful authentication, sessions are managed via secure HTTP cookies.
+
+## OAuth Flow
+
+### Initiate OAuth Login
+
+```http
+GET /login
+```
+
+Initiates the OAuth 2.0 authorization flow by redirecting to Google's authorization endpoint.
+
+**Query Parameters:**
+
+<ParamField query="redirect" type="string" optional>
+  Relative URL to redirect to after successful login (e.g., `/invite?token=abc`). Must start with `/` and not `//`.
+</ParamField>
+
+**Response:**
+
+Redirects to Google OAuth consent screen with a state token stored in a secure cookie.
+
+**Example:**
+
+```bash
+curl -X GET "https://your-domain.com/login?redirect=/dashboard" \
+  -L
+```
+
+---
+
+### OAuth Callback
+
+```http
+GET /oauth2/callback
+```
+
+Handles the OAuth callback from Google after user authorization. This endpoint:
+- Validates the state token
+- Exchanges the authorization code for an access token
+- Fetches user profile from Google
+- Creates or updates user account
+- Creates a session
+- Handles tier selection (if billing is enabled)
+- Handles invite flow (if redirect cookie present)
+
+**Query Parameters:**
+
+<ParamField query="code" type="string" required>
+  Authorization code from Google OAuth
+</ParamField>
+
+<ParamField query="state" type="string" required>
+  State token for CSRF protection
+</ParamField>
+
+**Response:**
+
+Redirects to:
+- `/tier/select` - If billing enabled and user hasn't selected a tier
+- Invite page - If user was invited to a team
+- `/` - Dashboard for existing users
+
+**Example:**
+
+```bash
+# This is called automatically by Google OAuth
+curl -X GET "https://your-domain.com/oauth2/callback?code=AUTH_CODE&state=STATE_TOKEN" \
+  -L
+```
+
+---
+
+## Session Management
+
+### Logout
+
+```http
+POST /logout
+```
+
+Ends the current user session by deleting the session from the database and clearing the session cookie.
+
+**Authentication:** Required (session cookie)
+
+**Request Body:**
+
+No body required.
+
+**Query Parameters:**
+
+<ParamField query="redirect" type="string" optional>
+  Relative URL to redirect to after logout (default: `/`)
+</ParamField>
+
+**Response:**
+
+Redirects to the specified URL (or `/`) and clears the session cookie.
+
+**Example:**
+
+```bash
+curl -X POST "https://your-domain.com/logout" \
+  -H "Cookie: session=your-session-id" \
+  -L
+```
+
+---
+
+## Session Details
+
+Sessions are created after successful OAuth authentication and stored in the database with the following properties:
+
+- **ID**: Unique session identifier stored in HTTP-only cookie
+- **UserID**: Associated user ID
+- **Email**: User's email address
+- **Tier**: User's subscription tier (free, business, enterprise)
+- **CurrentTeamID**: Active team context for RBAC operations
+- **IPAddress**: Client IP address at session creation
+- **UserAgent**: Client user agent string
+- **ExpiresAt**: Session expiration timestamp
+
+### Session Cookie Configuration
+
+- **Name**: `session` (configurable)
+- **HttpOnly**: `true` (prevents JavaScript access)
+- **Secure**: `true` in production
+- **SameSite**: `Lax`
+- **Path**: `/`
+- **Domain**: Configurable (supports subdomains)
+- **MaxAge**: Configurable (default varies by deployment)
+
+---
+
+## Dev Mode Authentication
+
+### Dev Login (Development Only)
+
+```http
+GET /dev/login
+```
+
+Bypass OAuth authentication in development mode. Only available when `devMode: true` in configuration.
+
+**Query Parameters:**
+
+<ParamField query="email" type="string" optional>
+  Email address for dev user (default: `dev@example.com`)
+</ParamField>
+
+**Response:**
+
+Creates a session and redirects to dashboard.
+
+**Example:**
+
+```bash
+curl -X GET "https://localhost:8080/dev/login?email=test@example.com" \
+  -L
+```
+
+<Warning>
+  Dev mode authentication should never be enabled in production environments.
+</Warning>
+
+---
+
+## Registration Policies
+
+The API supports three registration policies:
+
+1. **Open** - Anyone can register
+2. **Allowed Domains** - Only users with email addresses from configured domains can register
+3. **Invite Only** - Users can only register via team invitations
+
+The registration policy is enforced during the OAuth callback. If a user is rejected due to policy, they receive a `403 Forbidden` response.
+
+---
+
+## First User Special Handling
+
+The first user to authenticate receives special privileges:
+
+- Automatically assigned `platform_admin` role
+- Receives enterprise tier (when billing is disabled)
+- Creates the initial organization and team
+
+---
+
+## Error Responses
+
+All authentication endpoints may return the following errors:
+
+<ResponseField name="error" type="string">
+  Human-readable error message
+</ResponseField>
+
+### Common Error Codes
+
+- **400 Bad Request** - Invalid state token or missing authorization code
+- **403 Forbidden** - Registration policy violation or email not verified
+- **500 Internal Server Error** - Token exchange failed or database error

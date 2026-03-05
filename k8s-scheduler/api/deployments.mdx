@@ -1,0 +1,658 @@
+---
+title: Deployments
+description: Deployment lifecycle management endpoints
+---
+
+Deployments are running instances of templates. Each deployment has a unique name, runs in a Kubernetes namespace, and is managed by the UserDeployment operator.
+
+## Deployment Operations
+
+### List Deployments
+
+```http
+GET /api/deployments
+```
+
+Returns all deployments for the authenticated user. Results are filtered by the current team context if a team is selected.
+
+**Authentication:** Required (session or API key with `deployments:read` scope)
+
+**Query Parameters:**
+
+<ParamField query="team_id" type="string" optional>
+  Filter by team ID
+</ParamField>
+
+**Response:**
+
+<ResponseField name="name" type="string">
+  Unique deployment name
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Deployment status: `Pending`, `Provisioning`, `Ready`, `Error`, `Deleting`
+</ResponseField>
+
+<ResponseField name="template" type="string">
+  Template name used for this deployment
+</ResponseField>
+
+<ResponseField name="visibility" type="string">
+  Visibility: `public` or `internal`
+</ResponseField>
+
+<ResponseField name="ingresses" type="array">
+  Array of ingress endpoints
+</ResponseField>
+
+<ResponseField name="lastError" type="string">
+  Error message if status is `Error`
+</ResponseField>
+
+<ResponseField name="canDelete" type="boolean">
+  Whether the deployment can be deleted
+</ResponseField>
+
+**Example:**
+
+```bash
+curl -X GET "https://your-domain.com/api/deployments" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+```json
+[
+  {
+    "name": "abc123xyz7",
+    "status": "Ready",
+    "template": "nginx",
+    "visibility": "public",
+    "ingresses": [
+      {
+        "id": "nginx",
+        "name": "nginx",
+        "host": "abc123xyz7.yourdomain.com",
+        "url": "https://abc123xyz7.yourdomain.com"
+      }
+    ],
+    "canDelete": true
+  }
+]
+```
+
+---
+
+### Create Deployment
+
+```http
+POST /api/deployments
+```
+
+Create a new deployment from a template. The deployment is provisioned via the UserDeployment Kubernetes operator.
+
+**Authentication:** Required (`deployments:write` scope)
+
+**Request Body:**
+
+<ParamField body="template" type="string" required>
+  Template name to deploy (e.g., "nginx", "postgres")
+</ParamField>
+
+<ParamField body="envVars" type="object" optional>
+  Environment variables as key-value pairs
+</ParamField>
+
+<ParamField body="visibility" type="string" optional>
+  Deployment visibility: `public` or `internal` (default: `public`)
+</ParamField>
+
+**Response:** 201 Created
+
+<ResponseField name="name" type="string">
+  Generated deployment name
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Initial status (typically `Pending`)
+</ResponseField>
+
+<ResponseField name="template" type="string">
+  Template name
+</ResponseField>
+
+<ResponseField name="visibility" type="string">
+  Deployment visibility
+</ResponseField>
+
+**Example:**
+
+```bash
+curl -X POST "https://your-domain.com/api/deployments" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "template": "nginx",
+    "envVars": {
+      "PORT": "8080"
+    },
+    "visibility": "public"
+  }'
+```
+
+**Tier Limits:**
+
+Deployment creation is subject to tier limits when billing is enabled:
+- **Free**: 1 deployment
+- **Business**: 10 deployments
+- **Enterprise**: Unlimited
+
+If the limit is reached, the API returns `403 Forbidden`.
+
+---
+
+### Get Deployment Status
+
+```http
+GET /api/deployments/status?name={deploymentName}
+```
+
+Get the current status of a deployment, including ingress endpoints if ready.
+
+**Query Parameters:**
+
+<ParamField query="name" type="string" required>
+  Deployment name
+</ParamField>
+
+**Response:**
+
+<ResponseField name="status" type="string">
+  Current status
+</ResponseField>
+
+<ResponseField name="deploymentReady" type="boolean">
+  Whether the deployment is ready to receive traffic
+</ResponseField>
+
+<ResponseField name="allowDelete" type="boolean">
+  Whether the deployment can be deleted
+</ResponseField>
+
+<ResponseField name="allowRequest" type="boolean">
+  Whether a new deployment request is allowed
+</ResponseField>
+
+<ResponseField name="ingresses" type="array">
+  Array of ingress endpoints (only when ready)
+</ResponseField>
+
+<ResponseField name="statusMessage" type="string">
+  Additional status information or error message
+</ResponseField>
+
+**Example:**
+
+```bash
+curl -X GET "https://your-domain.com/api/deployments/status?name=abc123xyz7" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+```json
+{
+  "status": "Ready",
+  "deploymentReady": true,
+  "allowDelete": true,
+  "allowRequest": false,
+  "ingresses": [
+    {
+      "id": "nginx",
+      "name": "nginx",
+      "host": "abc123xyz7.yourdomain.com",
+      "url": "https://abc123xyz7.yourdomain.com"
+    }
+  ]
+}
+```
+
+---
+
+### Delete Deployment
+
+```http
+POST /api/deployments/delete
+```
+
+Delete a deployment. This marks the UserDeployment CR's `desiredState` as `deleted`, and the operator handles cleanup via finalizers.
+
+**Authentication:** Required (`deployments:write` scope)
+
+**Request Body:**
+
+<ParamField body="deployment_name" type="string" required>
+  Name of the deployment to delete
+</ParamField>
+
+**Response:** Redirects to deployments page (for form POST) or returns JSON success
+
+**Example:**
+
+```bash
+curl -X POST "https://your-domain.com/api/deployments/delete" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"deployment_name": "abc123xyz7"}'
+```
+
+**Notes:**
+- The API verifies deployment ownership before deletion
+- Deployment secrets are automatically cleaned up
+- Kubernetes resources are removed by the operator
+- Deletion is recorded in billing events
+
+---
+
+### Restart Deployment
+
+```http
+POST /api/deployments/restart
+```
+
+Restart all pods in a deployment by adding a restart annotation.
+
+**Request Body:**
+
+<ParamField body="deployment_name" type="string" required>
+  Name of the deployment to restart
+</ParamField>
+
+**Response:** 200 OK
+
+**Example:**
+
+```bash
+curl -X POST "https://your-domain.com/api/deployments/restart" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"deployment_name": "abc123xyz7"}'
+```
+
+---
+
+### Deploy Raw Image
+
+```http
+POST /api/deployments/deploy-image
+```
+
+Deploy a raw container image without requiring a pre-existing template. Useful for custom images or CI/CD pipelines.
+
+**Request Body:**
+
+<ParamField body="image" type="string" required>
+  Container image (e.g., `nginx:latest`, `myregistry.com/app:v1.2.3`)
+</ParamField>
+
+<ParamField body="name" type="string" optional>
+  Custom deployment name (auto-generated if not provided)
+</ParamField>
+
+<ParamField body="containerPort" type="integer" optional>
+  Port the container listens on (default: 8080)
+</ParamField>
+
+<ParamField body="envVars" type="object" optional>
+  Environment variables as key-value pairs
+</ParamField>
+
+<ParamField body="visibility" type="string" optional>
+  Visibility: `public` or `internal` (default: `public`)
+</ParamField>
+
+**Response:** 201 Created
+
+**Example:**
+
+```bash
+curl -X POST "https://your-domain.com/api/deployments/deploy-image" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "image": "myapp:v1.0.0",
+    "containerPort": 3000,
+    "envVars": {
+      "NODE_ENV": "production",
+      "PORT": "3000"
+    }
+  }'
+```
+
+---
+
+### Get Deployment Configuration
+
+```http
+GET /api/deployments/config?name={deploymentName}
+```
+
+Retrieve the configuration for a deployment, including environment variables.
+
+**Query Parameters:**
+
+<ParamField query="name" type="string" required>
+  Deployment name
+</ParamField>
+
+**Response:**
+
+<ResponseField name="configData" type="object">
+  Key-value pairs of environment variables
+</ResponseField>
+
+---
+
+### Update Deployment Configuration
+
+```http
+PUT /api/deployments/config
+```
+
+Update environment variables for a deployment. This triggers a pod restart.
+
+**Request Body:**
+
+<ParamField body="deployment_name" type="string" required>
+  Deployment name
+</ParamField>
+
+<ParamField body="configData" type="object" required>
+  New environment variables (replaces existing)
+</ParamField>
+
+**Response:** 200 OK
+
+**Example:**
+
+```bash
+curl -X PUT "https://your-domain.com/api/deployments/config" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "deployment_name": "abc123xyz7",
+    "configData": {
+      "PORT": "8080",
+      "DEBUG": "true"
+    }
+  }'
+```
+
+---
+
+## Deployment Logs
+
+### Get Deployment Logs
+
+```http
+GET /api/deployments/{name}/logs
+```
+
+Retrieve container logs from a deployment.
+
+**Path Parameters:**
+
+<ParamField path="name" type="string" required>
+  Deployment name
+</ParamField>
+
+**Query Parameters:**
+
+<ParamField query="service" type="string" optional>
+  Service name for multi-service deployments (default: first service)
+</ParamField>
+
+<ParamField query="tail" type="integer" optional>
+  Number of recent lines to return (default: 100)
+</ParamField>
+
+<ParamField query="follow" type="boolean" optional>
+  Stream logs in real-time (default: false)
+</ParamField>
+
+**Response:**
+
+<ResponseField name="logs" type="string">
+  Container logs
+</ResponseField>
+
+**Example:**
+
+```bash
+curl -X GET "https://your-domain.com/api/deployments/abc123xyz7/logs?tail=50" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+---
+
+### Stream Deployment Logs
+
+```http
+GET /api/deployments/{name}/logs/stream
+```
+
+Stream container logs in real-time using Server-Sent Events (SSE).
+
+**Path Parameters:**
+
+<ParamField path="name" type="string" required>
+  Deployment name
+</ParamField>
+
+**Query Parameters:**
+
+<ParamField query="service" type="string" optional>
+  Service name for multi-service deployments
+</ParamField>
+
+**Response:** `text/event-stream`
+
+**Example:**
+
+```bash
+curl -X GET "https://your-domain.com/api/deployments/abc123xyz7/logs/stream" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Accept: text/event-stream"
+```
+
+---
+
+## Deployment Metrics
+
+### Get Deployment Metrics
+
+```http
+GET /api/deployments/{name}/metrics
+```
+
+Retrieve CPU and memory metrics for a deployment.
+
+**Path Parameters:**
+
+<ParamField path="name" type="string" required>
+  Deployment name
+</ParamField>
+
+**Query Parameters:**
+
+<ParamField query="service" type="string" optional>
+  Service name for multi-service deployments
+</ParamField>
+
+**Response:**
+
+<ResponseField name="cpuUsage" type="string">
+  CPU usage in millicores (e.g., "150m")
+</ResponseField>
+
+<ResponseField name="memoryUsage" type="string">
+  Memory usage in bytes (e.g., "256Mi")
+</ResponseField>
+
+<ResponseField name="timestamp" type="string">
+  ISO 8601 timestamp of measurement
+</ResponseField>
+
+**Example:**
+
+```bash
+curl -X GET "https://your-domain.com/api/deployments/abc123xyz7/metrics" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+```json
+{
+  "cpuUsage": "150m",
+  "memoryUsage": "256Mi",
+  "timestamp": "2024-03-05T10:30:00Z"
+}
+```
+
+---
+
+## Deployment History
+
+### Get Deployment History
+
+```http
+GET /api/deployments/{name}/history
+```
+
+Retrieve deployment revision history (configuration changes, restarts, etc.).
+
+**Path Parameters:**
+
+<ParamField path="name" type="string" required>
+  Deployment name
+</ParamField>
+
+**Response:**
+
+<ResponseField name="revisions" type="array">
+  Array of revision objects
+</ResponseField>
+
+**Example:**
+
+```bash
+curl -X GET "https://your-domain.com/api/deployments/abc123xyz7/history" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+---
+
+## Auto-Update Configuration
+
+### Get Auto-Update Settings
+
+```http
+GET /api/deployments/auto-update?name={deploymentName}
+```
+
+Retrieve auto-update configuration for a deployment.
+
+**Response:**
+
+<ResponseField name="enabled" type="boolean">
+  Whether auto-update is enabled
+</ResponseField>
+
+<ResponseField name="strategy" type="string">
+  Update strategy (e.g., "rolling", "recreate")
+</ResponseField>
+
+---
+
+### Update Auto-Update Settings
+
+```http
+PUT /api/deployments/auto-update
+```
+
+Configure auto-update settings for a deployment.
+
+**Request Body:**
+
+<ParamField body="deployment_name" type="string" required>
+  Deployment name
+</ParamField>
+
+<ParamField body="enabled" type="boolean" required>
+  Enable or disable auto-updates
+</ParamField>
+
+<ParamField body="strategy" type="string" optional>
+  Update strategy: `rolling` or `recreate`
+</ParamField>
+
+**Response:** 200 OK
+
+**Example:**
+
+```bash
+curl -X PUT "https://your-domain.com/api/deployments/auto-update" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "deployment_name": "abc123xyz7",
+    "enabled": true,
+    "strategy": "rolling"
+  }'
+```
+
+---
+
+## Deployment Events
+
+### Get Deployment Events
+
+```http
+GET /api/deployments/{name}/events
+```
+
+Retrieve Kubernetes events for a deployment (useful for debugging).
+
+**Path Parameters:**
+
+<ParamField path="name" type="string" required>
+  Deployment name
+</ParamField>
+
+**Response:**
+
+<ResponseField name="events" type="array">
+  Array of Kubernetes event objects
+</ResponseField>
+
+**Example:**
+
+```bash
+curl -X GET "https://your-domain.com/api/deployments/abc123xyz7/events" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+---
+
+## Error Responses
+
+All deployment endpoints may return the following errors:
+
+<ResponseField name="error" type="string">
+  Human-readable error message
+</ResponseField>
+
+### Common Error Codes
+
+- **400 Bad Request** - Missing or invalid parameters
+- **403 Forbidden** - Deployment limit reached or ownership verification failed
+- **404 Not Found** - Deployment does not exist
+- **409 Conflict** - Deployment name already exists
+- **500 Internal Server Error** - Kubernetes API error or database failure
+- **503 Service Unavailable** - Operator not available

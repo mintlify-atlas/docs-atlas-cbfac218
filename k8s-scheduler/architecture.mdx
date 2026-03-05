@@ -1,0 +1,274 @@
+---
+title: "Architecture"
+description: "Detailed architecture of the K8s Scheduler platform"
+---
+
+## System Architecture
+
+K8s Scheduler is built with three main components that work together to provide a complete multi-tenant deployment platform:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                                   CLIENTS                                        │
+│                              (Web Browser / API)                                 │
+└─────────────────────────────────┬───────────────────────────────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              REACT SPA (ui/)                                     │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐ │
+│  │   React 19  │  │  React      │  │  TanStack   │  │     React Router 7      │ │
+│  │   + Vite    │  │  Hook Form  │  │   Query     │  │   (Client-side routing) │ │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────────────────┘ │
+│                                                                                  │
+│  ┌───────────────────────────────────────────────────────────────────────────┐  │
+│  │                              Pages                                         │  │
+│  │  Dashboard │ Teams │ Secrets │ Billing │ Templates │ Deployments         │  │
+│  └───────────────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────┬───────────────────────────────────────────────┘
+                                  │ HTTP API
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              GO SERVER (cmd/server)                              │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐ │
+│  │   OAuth     │  │  Session    │  │   Auth      │  │      Embedded SPA       │ │
+│  │  (Google)   │  │   Store     │  │ Middleware  │  │    (go:embed ui/dist)   │ │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────────────────┘ │
+│                                                                                  │
+│  ┌───────────────────────────────────────────────────────────────────────────┐  │
+│  │                            REST API Handlers                               │  │
+│  │  /api/deployments  /api/secrets  /api/templates  /api/orgs  /api/teams    │  │
+│  │  /api/billing      /api/clients  /api/me         /api/invites             │  │
+│  └───────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                  │
+│  ┌───────────────────────────────────────────────────────────────────────────┐  │
+│  │                            Middleware Stack                                │  │
+│  │  Security Headers → Auth → RBAC (Authz) → Audit Logging → Handler         │  │
+│  └───────────────────────────────────────────────────────────────────────────┘  │
+└────────────┬─────────────────────┬─────────────────────┬────────────────────────┘
+             │                     │                     │
+             ▼                     ▼                     ▼
+┌────────────────────┐  ┌──────────────────┐  ┌─────────────────────────────────┐
+│    PostgreSQL      │  │  Vault/AWS       │  │        Kubernetes API           │
+│    (db.Store)      │  │ (secrets.Store)  │  │   (controller-runtime client)   │
+│                    │  │                  │  │                                 │
+│  - Users           │  │  - User secrets  │  │  Creates UserDeployment CRs     │
+│  - Organizations   │  │  - Template      │  │                                 │
+│  - Teams           │  │    secrets       │  └────────────────┬────────────────┘
+│  - Deployments     │  │  - Deployment    │                   │
+│  - Templates       │  │    secrets       │                   │
+│  - Billing Plans   │  │  - Per-service   │                   │
+│  - Clients         │  │    secrets       │                   │
+│  - Sessions        │  │                  │                   │
+└────────────────────┘  └──────────────────┘                   │
+                                                               ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                           OPERATOR (cmd/operator)                                │
+│                                                                                  │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │                    UserDeployment Controller                             │    │
+│  │                                                                          │    │
+│  │   Watches: UserDeployment CRs                                           │    │
+│  │   Creates: Deployments, Services, Ingresses, ConfigMaps,                │    │
+│  │            ExternalSecrets, NetworkPolicies                             │    │
+│  │   Features: Health probes, resource limits, observability               │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+└────────────────────────────────────┬────────────────────────────────────────────┘
+                                     │
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                         KUBERNETES RESOURCES                                     │
+│                                                                                  │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐ │
+│  │  Deployment  │  │   Service    │  │   Ingress    │  │   ExternalSecret     │ │
+│  │  (per svc)   │  │  (per svc)   │  │  (per svc)   │  │   (syncs from Vault) │ │
+│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────────────┘ │
+│                                                                                  │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────────────────────┐   │
+│  │  ConfigMap   │  │ K8s Secret   │  │         NetworkPolicy                │   │
+│  │  (user data) │  │ (from ESO)   │  │  (tier-based isolation)              │   │
+│  └──────────────┘  └──────────────┘  └──────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+## Data Flow
+
+Here's how a deployment is created from user action to running pods:
+
+<Steps>
+  <Step title="User initiates deployment">
+    User fills out the deployment form in the React UI, selecting a template, providing environment variables, and configuring secrets.
+  </Step>
+
+  <Step title="API request with validation">
+    The frontend sends a `POST /api/deployments` request. The Go server validates the request, checks RBAC permissions, and enforces tier limits.
+  </Step>
+
+  <Step title="Database and secrets storage">
+    Server stores deployment metadata in PostgreSQL and writes secrets to Vault at the appropriate paths (`users/{id}/deployments/{name}`).
+  </Step>
+
+  <Step title="Kubernetes CR creation">
+    Server creates a `UserDeployment` custom resource in the user's Kubernetes namespace using the controller-runtime client.
+  </Step>
+
+  <Step title="Operator reconciliation">
+    The operator's reconciliation loop detects the new CR and creates all necessary Kubernetes resources:
+    - Deployments (one per service in the template)
+    - Services (ClusterIP for each deployment)
+    - Ingress (with Traefik annotations for routing)
+    - ExternalSecrets (to sync from Vault)
+    - NetworkPolicies (for tier-based isolation)
+  </Step>
+
+  <Step title="External Secrets Operator sync">
+    ESO watches the ExternalSecret resources and fetches secrets from Vault, creating Kubernetes Secret objects.
+  </Step>
+
+  <Step title="Pods start">
+    Kubernetes schedules pods for each deployment. Secrets are mounted as environment variables and/or files.
+  </Step>
+
+  <Step title="Ingress routing">
+    Traefik configures routes based on the Ingress resource, making the deployment accessible at `https://{name}.{domain}`.
+  </Step>
+</Steps>
+
+## Component Interactions
+
+### React Frontend → Go Server
+
+- **Protocol**: HTTP/REST API
+- **Authentication**: Session cookies (server sets HttpOnly cookie after OAuth)
+- **State management**: TanStack Query caches responses, handles refetching
+- **Real-time updates**: Server-Sent Events (SSE) for deployment logs and metrics
+
+### Go Server → PostgreSQL
+
+- **Driver**: `pgx/v5` (native Go PostgreSQL driver)
+- **Connection pooling**: Managed by pgxpool
+- **Migrations**: Applied on startup using embedded SQL files
+- **Transactions**: Used for RBAC operations (e.g., creating org + default team)
+
+### Go Server → Vault
+
+- **Client**: Official HashiCorp Vault Go SDK
+- **Authentication**: Token-based (from file or environment variable)
+- **Paths**: KV v2 secrets engine at `secret/` mount
+- **Operations**: Read, write, delete secrets at user/template/deployment scopes
+
+### Go Server → Kubernetes
+
+- **Client**: `controller-runtime` client for CRs, `client-go` for logs/exec
+- **Authentication**: In-cluster config (ServiceAccount) or kubeconfig
+- **Operations**: Create/delete UserDeployment CRs, stream logs, execute commands
+
+### Operator → Kubernetes
+
+- **Framework**: `controller-runtime` (manager, controller, reconciler pattern)
+- **Watches**: UserDeployment, AgentTask, Workflow CRs
+- **Creates**: Deployments, Services, Ingresses, ExternalSecrets, NetworkPolicies
+- **Updates**: CR status field with deployment state and URLs
+
+## Directory Structure
+
+The codebase is organized into clear layers:
+
+```
+k8s-scheduler/
+├── cmd/
+│   ├── server/              # Web server entrypoint
+│   │   └── main.go          # HTTP server, OAuth, session init
+│   └── operator/            # K8s operator entrypoint
+│       └── main.go          # Controller-runtime setup
+│
+├── internal/
+│   ├── server/              # HTTP handlers & routing
+│   ├── db/                  # PostgreSQL data layer
+│   ├── secrets/             # Secrets management (Vault/AWS)
+│   ├── operator/            # Operator controllers and APIs
+│   ├── session/             # Session management
+│   ├── middleware/          # HTTP middleware
+│   ├── authz/               # Authorization logic
+│   ├── oauth/               # OAuth providers
+│   ├── billing/             # Stripe integration
+│   ├── tierlimits/          # Subscription tier enforcement
+│   └── templatesync/        # ConfigMap <-> DB sync
+│
+└── ui/                      # React frontend
+    ├── src/api/             # API client and hooks
+    ├── src/components/      # React components
+    ├── src/pages/           # Page components
+    └── src/routes/          # React Router config
+```
+
+See the [Frontend](/k8s-scheduler/frontend), [Server](/k8s-scheduler/server), and [Operator](/k8s-scheduler/operator) pages for detailed documentation on each component.
+
+## Tech Stack
+
+### Frontend
+- **React 19** with TypeScript 5.9
+- **Vite 7** for development and builds
+- **TanStack Query 5** for server state
+- **React Router 7** for routing
+- **Tailwind CSS 4** for styling
+- **React Hook Form + Zod** for forms
+
+### Backend
+- **Go 1.24** with standard library HTTP server
+- **pgx/v5** for PostgreSQL
+- **controller-runtime** for Kubernetes operator
+- **HashiCorp Vault SDK** for secrets
+- **Stripe Go SDK** for billing
+- **log/slog** for structured logging
+
+### Infrastructure
+- **Kubernetes** (any CNCF-conformant cluster)
+- **PostgreSQL** for persistent data
+- **Vault** or AWS Secrets Manager for secrets
+- **External Secrets Operator** for K8s secret injection
+- **Traefik** for ingress routing
+- **cert-manager** for TLS certificates
+
+## Scaling and High Availability
+
+### Server
+- **Horizontal scaling**: Multiple replicas behind a load balancer
+- **Session storage**: Redis or PostgreSQL for shared session state
+- **Database**: PostgreSQL with read replicas
+- **Secrets**: Vault HA cluster with Raft storage
+
+### Operator
+- **Leader election**: Only one active reconciler at a time (built into controller-runtime)
+- **Multiple replicas**: Standby replicas ready for failover
+- **Work queue**: Kubernetes workqueue ensures no lost events
+
+<Note>
+The operator uses leader election by default. Only one replica actively reconciles CRs, but multiple replicas can run for high availability. If the leader fails, another replica automatically takes over.
+</Note>
+
+## Security
+
+- **Authentication**: OAuth2 with Google (production) or auto-login (dev mode)
+- **Authorization**: RBAC with org/team hierarchy, enforced by middleware on every request
+- **Secrets**: Never stored in plain text; always in Vault/AWS Secrets Manager
+- **Network isolation**: NetworkPolicies restrict traffic between user namespaces
+- **TLS**: All external traffic uses HTTPS via cert-manager and Let's Encrypt
+- **Session security**: HttpOnly, Secure, SameSite cookies
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Multi-Tenancy" icon="users" href="/k8s-scheduler/multi-tenancy">
+    Learn how organizations, teams, and white-labeling work
+  </Card>
+  <Card title="RBAC" icon="shield" href="/k8s-scheduler/rbac">
+    Understand the role-based access control system
+  </Card>
+  <Card title="Secrets" icon="key" href="/k8s-scheduler/secrets">
+    Deep dive into the three-tier secrets architecture
+  </Card>
+  <Card title="Templates" icon="file-code" href="/k8s-scheduler/templates">
+    Create reusable deployment templates
+  </Card>
+</CardGroup>

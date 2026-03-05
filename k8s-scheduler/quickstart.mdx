@@ -1,0 +1,297 @@
+---
+title: "Quick Start"
+description: "Get k8s-scheduler running locally in under 2 minutes with kind"
+---
+
+## Prerequisites
+
+Before you begin, make sure you have these tools installed:
+
+- **Docker** (Docker Desktop or equivalent) — [Install Docker](https://docs.docker.com/get-docker/)
+- **kind** (Kubernetes IN Docker) — `brew install kind` or [install guide](https://kind.sigs.k8s.io/docs/user/quick-start/#installation)
+- **kubectl** — `brew install kubectl` or [install guide](https://kubernetes.io/docs/tasks/tools/)
+- **Helm** — `brew install helm` or [install guide](https://helm.sh/docs/intro/install/)
+
+<Note>
+No cloud account, Vault, or DNS configuration needed for local development. Everything runs in Docker.
+</Note>
+
+## One-Command Setup
+
+Clone the repository and start the local environment:
+
+```bash
+git clone https://github.com/opsnorth/k8s-scheduler.git
+cd k8s-scheduler
+
+# Start everything (kind cluster, PostgreSQL, Traefik, app)
+make dev-local
+```
+
+This command will:
+
+<Steps>
+  <Step title="Create a kind cluster">
+    Sets up a local Kubernetes cluster with port mappings for `localhost:8080` and `localhost:8081`
+  </Step>
+  <Step title="Install PostgreSQL">
+    Deploys PostgreSQL via Helm chart for persistent data storage
+  </Step>
+  <Step title="Install Traefik">
+    Ingress controller for routing `*.localhost` traffic to deployments
+  </Step>
+  <Step title="Build Docker images">
+    Builds `k8s-scheduler-server` and `k8s-scheduler-operator` images
+  </Step>
+  <Step title="Load images into kind">
+    Transfers images into the kind cluster
+  </Step>
+  <Step title="Apply Kubernetes manifests">
+    Deploys server, operator, CRDs, and dev configuration
+  </Step>
+</Steps>
+
+The setup takes about **1-2 minutes** depending on your machine.
+
+## Access the Platform
+
+Once the setup completes, open your browser:
+
+```bash
+open http://localhost:8081
+```
+
+You'll be automatically logged in as `dev@localhost` (no OAuth required in dev mode).
+
+<Info>
+Dev mode (`DEV_MODE=true`) skips Google OAuth and creates a test user automatically. This is **only** for local development — never enable this in production.
+</Info>
+
+## Create Your First Deployment
+
+Now let's deploy something!
+
+<Steps>
+  <Step title="Navigate to Deployments">
+    Click **"Deployments"** in the sidebar
+  </Step>
+  <Step title="Click Create Deployment">
+    Click the **"+ Create Deployment"** button
+  </Step>
+  <Step title="Choose a template">
+    Select **"nginx"** from the template dropdown
+  </Step>
+  <Step title="Name your deployment">
+    Enter a name like `my-first-app` (lowercase, alphanumeric only)
+  </Step>
+  <Step title="Deploy">
+    Click **"Create"** and wait for the deployment to start
+  </Step>
+</Steps>
+
+The operator will create:
+
+- A Kubernetes **Deployment** with nginx pods
+- A **Service** to expose the pods
+- A **Traefik IngressRoute** for HTTP routing
+- A **ConfigMap** if the template includes config data
+
+Watch the status change from **Creating** → **Running** in the UI.
+
+## Access Your Deployment
+
+Once the deployment is **Running**, you can access it at:
+
+```
+http://<deployment-name>.localhost:8080
+```
+
+For example, if you named it `my-first-app`:
+
+```bash
+curl http://my-first-app.localhost:8080
+```
+
+You should see the nginx welcome page.
+
+<Note>
+The `.localhost` domain works without DNS because it's a special reserved domain. Traefik routes requests based on the `Host` header.
+</Note>
+
+## View Logs
+
+Check the logs for the server and operator:
+
+<CodeGroup>
+
+```bash Server Logs
+kubectl logs -n scheduler-system deployment/k8s-scheduler-server -f
+```
+
+```bash Operator Logs
+kubectl logs -n scheduler-system deployment/k8s-scheduler-operator -f
+```
+
+```bash All Pods
+kubectl get pods -n scheduler-system
+```
+
+</CodeGroup>
+
+Expected output:
+
+```
+NAME                                      READY   STATUS    RESTARTS   AGE
+k8s-scheduler-operator-xxxxx-xxxxx        1/1     Running   0          2m
+k8s-scheduler-server-xxxxx-xxxxx          1/1     Running   0          2m
+```
+
+## Explore the UI
+
+The local dev environment includes a full-featured React UI:
+
+### Dashboard
+
+- View all deployments with status cards
+- Quick actions: restart, delete, view logs
+- Metrics graphs (CPU, memory, request rate)
+
+### Teams
+
+- Create teams
+- Invite members (email invites disabled in dev mode)
+- Manage roles: `team_admin`, `developer`, `viewer`
+
+### Secrets
+
+- Add organization-wide secrets
+- Add deployment-specific secrets
+- Secrets are stored in the database (no Vault in dev mode)
+
+### Templates
+
+- Browse system templates (nginx, LibreChat, etc.)
+- Create custom templates with YAML specs
+- Set visibility: `private`, `team`, or `org`
+
+<Warning>
+In dev mode, secrets are stored in the PostgreSQL database with encryption. In production, use HashiCorp Vault or AWS Secrets Manager for proper secrets management.
+</Warning>
+
+## Make Code Changes
+
+After editing Go or React code, rebuild and reload:
+
+```bash
+make dev-reload
+```
+
+This will:
+
+1. Rebuild Docker images for server and operator
+2. Load new images into the kind cluster
+3. Restart the deployments
+4. Wait for rollout to complete
+
+Your changes will be live in about 30 seconds.
+
+## Teardown
+
+When you're done, delete the entire kind cluster:
+
+```bash
+make dev-local-down
+```
+
+<Warning>
+This deletes the entire kind cluster and all data. Your deployments, secrets, and database records will be lost.
+</Warning>
+
+To start fresh, just run `make dev-local` again.
+
+## Troubleshooting
+
+### Port Conflict on 8081 or 8080
+
+Another process is using the port. Find and stop it:
+
+```bash
+lsof -i :8081
+lsof -i :8080
+```
+
+Or change the ports in `deploy/dev/kind-config.yaml`.
+
+### Pods in CrashLoopBackOff
+
+Check the logs:
+
+```bash
+kubectl logs -n scheduler-system <pod-name>
+```
+
+Common cause: **PostgreSQL not ready yet**. Wait 30 seconds and the pod will retry.
+
+### Deployment Not Accessible at *.localhost:8080
+
+Ensure Traefik is running:
+
+```bash
+kubectl get pods -n traefik
+```
+
+Check the IngressRoute was created:
+
+```bash
+kubectl get ingressroutes -A
+```
+
+If missing, check the operator logs for errors.
+
+### Cannot Access http://localhost:8081
+
+Verify the server pod is running:
+
+```bash
+kubectl get pods -n scheduler-system
+```
+
+If the pod is in `CrashLoopBackOff`, check logs:
+
+```bash
+kubectl logs -n scheduler-system deployment/k8s-scheduler-server
+```
+
+Common issue: Database connection failed. Check PostgreSQL:
+
+```bash
+kubectl get pods -n postgres
+```
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Local Development Guide" icon="laptop-code" href="/k8s-scheduler/local-development">
+    Deep dive into local dev workflows and configuration
+  </Card>
+  <Card title="Architecture Overview" icon="sitemap" href="/k8s-scheduler/overview">
+    Learn how k8s-scheduler components work together
+  </Card>
+</CardGroup>
+
+## Environment Variables (Dev Mode)
+
+The dev overlay automatically sets these via `deploy/dev/configmap-patch.yaml`:
+
+| Variable | Dev Value | Notes |
+|----------|-----------|-------|
+| `DEV_MODE` | `true` | Enables dev login, skips OAuth validation |
+| `SESSION_BACKEND` | `memory` | No Redis needed |
+| `COOKIE_SECURE` | `false` | No TLS in local dev |
+| `SECRETS_BACKEND` | `database` | No Vault needed (uses encrypted DB storage) |
+| `BILLING_ENABLED` | `false` | No Stripe needed |
+| `DEPLOYMENT_DOMAIN` | `localhost` | IngressRoutes use `*.localhost` |
+| `DISABLE_NETWORK_POLICIES` | `true` | Operator skips network policies |
+| `REACT_UI` | `true` | Serve embedded React SPA |
+
+You can override these by editing `deploy/dev/configmap-patch.yaml` and running `make dev-reload`.

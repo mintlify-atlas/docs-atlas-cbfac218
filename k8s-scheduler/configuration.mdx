@@ -1,0 +1,590 @@
+---
+title: Configuration
+description: Environment variables and configuration options for k8s-scheduler
+---
+
+k8s-scheduler is configured through environment variables. Different variables apply to the server and operator components.
+
+## Server Configuration
+
+The server (`cmd/server`) accepts configuration via environment variables or Vault-injected secrets.
+
+### Always Required
+
+<ParamField path="DATABASE_DSN" type="string" required>
+  PostgreSQL connection string.
+
+  ```bash
+  DATABASE_DSN="postgres://user:password@localhost:5432/scheduler?sslmode=disable"
+  ```
+
+  For production, enable SSL:
+  ```bash
+  DATABASE_DSN="postgres://user:password@db.example.com:5432/scheduler?sslmode=require"
+  ```
+</ParamField>
+
+### Required in Production
+
+These can be skipped when `DEV_MODE=true` for local development.
+
+<ParamField path="GOOGLE_CLIENT_ID" type="string" required>
+  Google OAuth2 client ID from [Google Cloud Console](https://console.cloud.google.com/apis/credentials).
+
+  ```bash
+  GOOGLE_CLIENT_ID="your-client-id.apps.googleusercontent.com"
+  ```
+</ParamField>
+
+<ParamField path="GOOGLE_CLIENT_SECRET" type="string" required>
+  Google OAuth2 client secret.
+
+  ```bash
+  GOOGLE_CLIENT_SECRET="your-client-secret"
+  ```
+</ParamField>
+
+<ParamField path="GOOGLE_REDIRECT_URL" type="string" required>
+  OAuth callback URL. Must match the authorized redirect URI in Google Cloud Console.
+
+  ```bash
+  GOOGLE_REDIRECT_URL="https://app.example.com/oauth2/callback"
+  ```
+</ParamField>
+
+### Server Settings
+
+<ParamField path="DEV_MODE" type="boolean" default="false">
+  Enable local development mode. Disables OAuth and auto-logs in as `dev@localhost`.
+
+  ```bash
+  DEV_MODE="true"
+  ```
+
+  <Warning>
+    Never enable in production. This bypasses all authentication.
+  </Warning>
+</ParamField>
+
+<ParamField path="REACT_UI" type="boolean" default="false">
+  Serve embedded React SPA from `go:embed`.
+
+  ```bash
+  REACT_UI="true"
+  ```
+
+  Set to `false` if serving the frontend separately (e.g., via CDN or Vite dev server).
+</ParamField>
+
+<ParamField path="SERVER_ADDR" type="string" default=":8081">
+  HTTP server listen address.
+
+  ```bash
+  SERVER_ADDR=":8081"
+  ```
+</ParamField>
+
+<ParamField path="BASE_URL" type="string" default="http://localhost:8081">
+  Public URL of the application. Used for OAuth redirects and email links.
+
+  ```bash
+  BASE_URL="https://app.example.com"
+  ```
+</ParamField>
+
+<ParamField path="DEPLOYMENT_DOMAIN" type="string" default="example.com">
+  Base domain for user deployment ingresses.
+
+  ```bash
+  DEPLOYMENT_DOMAIN="example.com"
+  ```
+
+  User deployments get subdomains like:
+  ```
+  https://user-123-my-app.example.com
+  ```
+</ParamField>
+
+<ParamField path="KUBERNETES_ENABLED" type="boolean" default="false">
+  Enable Kubernetes integration (create UserDeployment CRs).
+
+  ```bash
+  KUBERNETES_ENABLED="true"
+  ```
+
+  Set to `false` for local development without a K8s cluster.
+</ParamField>
+
+<ParamField path="KUBERNETES_NAMESPACE" type="string" default="sandbox-%s">
+  Namespace pattern for user sandboxes. `%s` is replaced with user ID.
+
+  ```bash
+  KUBERNETES_NAMESPACE="sandbox-%s"
+  ```
+
+  Examples:
+  - User `user-123` → namespace `sandbox-user-123`
+  - User `alice` → namespace `sandbox-alice`
+</ParamField>
+
+### Session Configuration
+
+<ParamField path="SESSION_BACKEND" type="string" default="memory">
+  Session storage backend. Options: `memory`, `postgres`, `redis`.
+
+  ```bash
+  SESSION_BACKEND="postgres"
+  ```
+
+  <CardGroup cols={3}>
+    <Card title="memory" icon="microchip">
+      In-memory storage (lost on restart).
+      
+      **Use for**: Local development
+      
+      **Don't use**: Production
+    </Card>
+    
+    <Card title="postgres" icon="database">
+      PostgreSQL-backed sessions.
+      
+      **Use for**: Production (shared database)
+      
+      **Requires**: `DATABASE_DSN`
+    </Card>
+    
+    <Card title="redis" icon="server">
+      Redis-backed sessions.
+      
+      **Use for**: Production (separate cache)
+      
+      **Requires**: `REDIS_ADDR`
+    </Card>
+  </CardGroup>
+</ParamField>
+
+<ParamField path="SESSION_DURATION" type="duration" default="24h">
+  Session lifetime before automatic expiration.
+
+  ```bash
+  SESSION_DURATION="24h"
+  ```
+
+  Supports: `1h`, `24h`, `168h` (7 days), etc.
+</ParamField>
+
+<ParamField path="SESSION_COOKIE_NAME" type="string" default="session_id">
+  Cookie name for session identifier.
+
+  ```bash
+  SESSION_COOKIE_NAME="session_id"
+  ```
+</ParamField>
+
+<ParamField path="COOKIE_SECURE" type="boolean" default="false">
+  Require HTTPS for cookies. Enable in production.
+
+  ```bash
+  COOKIE_SECURE="true"
+  ```
+</ParamField>
+
+<ParamField path="REDIS_ADDR" type="string">
+  Redis server address. Required when `SESSION_BACKEND=redis`.
+
+  ```bash
+  REDIS_ADDR="localhost:6379"
+  ```
+</ParamField>
+
+### Secrets Backend
+
+k8s-scheduler supports three secrets backends for user/template/deployment secrets:
+
+<ParamField path="SECRETS_BACKEND" type="string" default="database">
+  Secrets storage backend. Options: `database`, `vault`, `aws`.
+
+  ```bash
+  SECRETS_BACKEND="vault"
+  ```
+
+  <CardGroup cols={3}>
+    <Card title="database" icon="database">
+      Encrypted secrets in PostgreSQL.
+      
+      **Requires**: `SECRETS_ENCRYPTION_KEY`
+      
+      **Use for**: Simple deployments
+    </Card>
+    
+    <Card title="vault" icon="vault">
+      HashiCorp Vault KV v2.
+      
+      **Requires**: `VAULT_ADDR`, `VAULT_TOKEN`
+      
+      **Use for**: Production (recommended)
+    </Card>
+    
+    <Card title="aws" icon="aws">
+      AWS Secrets Manager.
+      
+      **Requires**: `AWS_REGION`, IAM role
+      
+      **Use for**: AWS-native deployments
+    </Card>
+  </CardGroup>
+</ParamField>
+
+#### Database Backend
+
+<ParamField path="SECRETS_ENCRYPTION_KEY" type="string">
+  Base64-encoded 32-byte encryption key. Required when `SECRETS_BACKEND=database`.
+
+  ```bash
+  # Generate a key
+  openssl rand -base64 32
+
+  SECRETS_ENCRYPTION_KEY="your-base64-encoded-key"
+  ```
+
+  <Warning>
+    Store this key securely. Losing it means all secrets become unrecoverable.
+  </Warning>
+</ParamField>
+
+#### Vault Backend
+
+<ParamField path="VAULT_ADDR" type="string">
+  Vault server address.
+
+  ```bash
+  VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
+  ```
+</ParamField>
+
+<ParamField path="VAULT_TOKEN" type="string">
+  Vault access token.
+
+  ```bash
+  VAULT_TOKEN="hvs.your-vault-token"
+  ```
+</ParamField>
+
+<ParamField path="VAULT_TOKEN_FILE" type="string">
+  Path to Vault token file (for Vault Agent auto-refresh).
+
+  ```bash
+  VAULT_TOKEN_FILE="/vault/secrets/token"
+  ```
+
+  Preferred over `VAULT_TOKEN` in production.
+</ParamField>
+
+<ParamField path="VAULT_MOUNT_PATH" type="string" default="secret">
+  Vault KV mount path.
+
+  ```bash
+  VAULT_MOUNT_PATH="secret"
+  ```
+</ParamField>
+
+#### AWS Backend
+
+<ParamField path="AWS_REGION" type="string">
+  AWS region for Secrets Manager.
+
+  ```bash
+  AWS_REGION="us-east-1"
+  ```
+</ParamField>
+
+<Info>
+  AWS credentials are auto-discovered from:
+  - Instance metadata (IAM role)
+  - Environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
+  - `~/.aws/credentials`
+</Info>
+
+### Optional Integrations
+
+#### Billing (Stripe)
+
+<ParamField path="BILLING_ENABLED" type="boolean" default="false">
+  Enable Stripe billing integration.
+
+  ```bash
+  BILLING_ENABLED="true"
+  ```
+</ParamField>
+
+<ParamField path="STRIPE_API_KEY" type="string">
+  Stripe secret key (`sk_test_...` or `sk_live_...`).
+
+  ```bash
+  STRIPE_API_KEY="sk_live_..."
+  ```
+</ParamField>
+
+<ParamField path="STRIPE_WEBHOOK_SECRET" type="string">
+  Stripe webhook signing secret (`whsec_...`).
+
+  ```bash
+  STRIPE_WEBHOOK_SECRET="whsec_..."
+  ```
+
+  Used to verify webhook payloads from Stripe.
+</ParamField>
+
+#### Email (Invitations)
+
+<ParamField path="EMAIL_PROVIDER" type="string">
+  Email provider. Options: `smtp`, `sendgrid`.
+
+  ```bash
+  EMAIL_PROVIDER="smtp"
+  ```
+</ParamField>
+
+<ParamField path="SMTP_HOST" type="string">
+  SMTP server hostname.
+
+  ```bash
+  SMTP_HOST="smtp.gmail.com"
+  ```
+</ParamField>
+
+<ParamField path="SMTP_PORT" type="string" default="587">
+  SMTP server port.
+
+  ```bash
+  SMTP_PORT="587"
+  ```
+</ParamField>
+
+<ParamField path="SMTP_USERNAME" type="string">
+  SMTP authentication username.
+
+  ```bash
+  SMTP_USERNAME="user@example.com"
+  ```
+</ParamField>
+
+<ParamField path="SMTP_PASSWORD" type="string">
+  SMTP authentication password.
+
+  ```bash
+  SMTP_PASSWORD="your-password"
+  ```
+</ParamField>
+
+<ParamField path="SENDGRID_API_KEY" type="string">
+  SendGrid API key. Required when `EMAIL_PROVIDER=sendgrid`.
+
+  ```bash
+  SENDGRID_API_KEY="SG.your-api-key"
+  ```
+</ParamField>
+
+#### AI (Template Generation)
+
+<ParamField path="ANTHROPIC_API_KEY" type="string">
+  Anthropic API key for AI-assisted template generation.
+
+  ```bash
+  ANTHROPIC_API_KEY="sk-ant-..."
+  ```
+
+  Optional. Enables AI template generation feature in the UI.
+</ParamField>
+
+## Operator Configuration
+
+The operator (`cmd/operator`) manages UserDeployment custom resources.
+
+### Environment Variables
+
+<ParamField path="DEPLOYMENT_DOMAIN" type="string" required>
+  Base domain for ingress routing.
+
+  ```bash
+  DEPLOYMENT_DOMAIN="example.com"
+  ```
+
+  Must match the server's `DEPLOYMENT_DOMAIN`.
+</ParamField>
+
+<ParamField path="CLUSTER_SECRET_STORE" type="string">
+  ClusterSecretStore name for External Secrets Operator.
+
+  ```bash
+  CLUSTER_SECRET_STORE="vault-backend"
+  ```
+
+  If empty, the operator skips creating ExternalSecret resources.
+</ParamField>
+
+<ParamField path="DISABLE_NETWORK_POLICIES" type="boolean" default="false">
+  Skip NetworkPolicy creation (for local development).
+
+  ```bash
+  DISABLE_NETWORK_POLICIES="true"
+  ```
+
+  Useful for clusters without NetworkPolicy support (e.g., kind without Calico).
+</ParamField>
+
+<ParamField path="WATCH_NAMESPACE" type="string">
+  Namespace to watch for UserDeployments. Empty = all namespaces.
+
+  ```bash
+  WATCH_NAMESPACE=""
+  ```
+</ParamField>
+
+## Configuration Examples
+
+### Production (Vault + PostgreSQL)
+
+```bash .env
+# Database
+DATABASE_DSN="postgres://user:password@prod-db.example.com:5432/scheduler?sslmode=require"
+
+# OAuth
+GOOGLE_CLIENT_ID="prod-client.apps.googleusercontent.com"
+GOOGLE_CLIENT_SECRET="prod-secret"
+BASE_URL="https://app.example.com"
+GOOGLE_REDIRECT_URL="https://app.example.com/oauth2/callback"
+
+# Domain
+DEPLOYMENT_DOMAIN="example.com"
+
+# Kubernetes
+KUBERNETES_ENABLED="true"
+KUBERNETES_NAMESPACE="sandbox-%s"
+
+# Secrets
+SECRETS_BACKEND="vault"
+VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
+VAULT_TOKEN_FILE="/vault/secrets/token"
+
+# Session
+SESSION_BACKEND="postgres"
+SESSION_DURATION="24h"
+COOKIE_SECURE="true"
+
+# Server
+REACT_UI="true"
+SERVER_ADDR=":8081"
+
+# Billing
+BILLING_ENABLED="true"
+STRIPE_API_KEY="sk_live_..."
+STRIPE_WEBHOOK_SECRET="whsec_..."
+
+# Email
+EMAIL_PROVIDER="smtp"
+SMTP_HOST="smtp.sendgrid.net"
+SMTP_PORT="587"
+SMTP_USERNAME="apikey"
+SMTP_PASSWORD="SG.your-api-key"
+```
+
+### Local Development
+
+```bash .env
+# Database (local PostgreSQL)
+DATABASE_DSN="postgres://postgres:postgres@localhost:5432/scheduler?sslmode=disable"
+
+# Dev mode (skip OAuth)
+DEV_MODE="true"
+BASE_URL="http://localhost:8081"
+
+# Domain
+DEPLOYMENT_DOMAIN="localhost"
+
+# Disable Kubernetes
+KUBERNETES_ENABLED="false"
+
+# Secrets (database)
+SECRETS_BACKEND="database"
+SECRETS_ENCRYPTION_KEY="your-base64-key"
+
+# Session (in-memory)
+SESSION_BACKEND="memory"
+
+# Server
+REACT_UI="true"
+SERVER_ADDR=":8081"
+```
+
+### AWS Deployment (No Vault)
+
+```bash .env
+# Database (RDS)
+DATABASE_DSN="postgres://user:password@prod.abc123.us-east-1.rds.amazonaws.com:5432/scheduler?sslmode=require"
+
+# OAuth
+GOOGLE_CLIENT_ID="prod-client.apps.googleusercontent.com"
+GOOGLE_CLIENT_SECRET="prod-secret"
+BASE_URL="https://app.example.com"
+GOOGLE_REDIRECT_URL="https://app.example.com/oauth2/callback"
+
+# Domain
+DEPLOYMENT_DOMAIN="example.com"
+
+# Kubernetes
+KUBERNETES_ENABLED="true"
+KUBERNETES_NAMESPACE="sandbox-%s"
+
+# Secrets (AWS Secrets Manager)
+SECRETS_BACKEND="aws"
+AWS_REGION="us-east-1"
+
+# Session (Redis)
+SESSION_BACKEND="redis"
+REDIS_ADDR="prod-redis.abc123.cache.amazonaws.com:6379"
+SESSION_DURATION="24h"
+COOKIE_SECURE="true"
+
+# Server
+REACT_UI="true"
+SERVER_ADDR=":8081"
+```
+
+## ConfigMap (Helm)
+
+When deploying via Helm, non-secret configuration is stored in a ConfigMap:
+
+```yaml charts/k8s-scheduler/templates/configmap-server.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k8s-scheduler-server-config
+  namespace: {{ .Release.Namespace }}
+data:
+  BASE_URL: "https://app.{{ .Values.domain }}"
+  DEPLOYMENT_DOMAIN: "{{ .Values.domain }}"
+  GOOGLE_REDIRECT_URL: "https://app.{{ .Values.domain }}/oauth2/callback"
+  KUBERNETES_ENABLED: "true"
+  KUBERNETES_NAMESPACE: "{{ .Values.kubernetes.namespaceTemplate }}"
+  SESSION_BACKEND: "{{ .Values.session.backend }}"
+  SESSION_DURATION: "{{ .Values.session.duration }}"
+  COOKIE_SECURE: "{{ .Values.session.cookieSecure }}"
+  SECRETS_BACKEND: "vault"
+  VAULT_ADDR: "{{ .Values.vault.address }}"
+  VAULT_MOUNT_PATH: "{{ .Values.vault.mountPath }}"
+```
+
+Secrets are injected via Vault Agent annotations on the server deployment.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Deployment Guide" icon="rocket" href="/k8s-scheduler/deployment-guide">
+    Deploy k8s-scheduler to production
+  </Card>
+  
+  <Card title="Dependencies" icon="puzzle-piece" href="/k8s-scheduler/dependencies">
+    Learn about platform dependencies
+  </Card>
+</CardGroup>

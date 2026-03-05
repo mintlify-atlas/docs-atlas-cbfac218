@@ -1,0 +1,248 @@
+---
+title: Infrastructure Layer
+description: Deploy VPC, EKS cluster, Tailscale VPN, and Vault infrastructure
+---
+
+The infrastructure layer provisions the foundation of your AWS environment, including networking, Kubernetes cluster, secure VPN access, and secrets management infrastructure.
+
+## What Gets Deployed
+
+This layer creates:
+
+- **VPC & Networking**: Virtual Private Cloud with public and private subnets, NAT gateways, and route tables
+- **EKS Cluster**: Kubernetes cluster with managed node groups
+- **Tailscale Subnet Router**: Secure VPN access to private resources
+- **Vault Infrastructure**: KMS keys and DynamoDB backend for HashiCorp Vault
+
+## Environment Variables
+
+Before deploying, set the required environment variables:
+
+```bash
+# Source your .env file
+source .env
+
+# Verify variables are set
+echo $TF_VAR_tailscale_auth_key
+echo $TF_VAR_cloudflare_api_token
+```
+
+### Required Variables
+
+| Variable | Description | How to Obtain |
+|----------|-------------|---------------|
+| `TF_VAR_tailscale_auth_key` | Tailscale authentication key | Create at [Tailscale Admin Console](https://login.tailscale.com/admin/settings/keys) |
+| `TF_VAR_cloudflare_api_token` | Cloudflare API token for DNS | Create in Cloudflare Dashboard under API Tokens |
+
+<Warning>
+  Make sure you've created a Tailscale auth key with the following settings:
+  - [x] Reusable
+  - [x] Ephemeral
+  - [x] Pre-authorized
+  - Tags: `tag:aws-router`
+</Warning>
+
+## Deployment Steps
+
+<Steps>
+  <Step title="Navigate to infrastructure directory">
+    ```bash
+    cd terraform/dev/1-infrastructure
+    ```
+  </Step>
+
+  <Step title="Set environment variables">
+    ```bash
+    export TF_VAR_tailscale_auth_key="tskey-auth-xxxxx"
+    export TF_VAR_cloudflare_api_token="your-token"
+    ```
+  </Step>
+
+  <Step title="Initialize Terraform">
+    ```bash
+    terraform init
+    ```
+    
+    This initializes the S3 backend and downloads required provider plugins.
+  </Step>
+
+  <Step title="Review the plan">
+    ```bash
+    terraform plan
+    ```
+    
+    Review the resources that will be created. This includes:
+    - VPC with CIDR `10.0.0.0/16`
+    - 3 public and 3 private subnets across availability zones
+    - NAT gateways for private subnet internet access
+    - EKS cluster with control plane and node groups
+    - EC2 instance for Tailscale subnet router
+    - KMS key and DynamoDB table for Vault
+  </Step>
+
+  <Step title="Apply the configuration">
+    ```bash
+    terraform apply
+    ```
+    
+    Type `yes` when prompted. This process takes approximately 15-20 minutes.
+    
+    <Info>
+      EKS cluster creation is the longest step, typically taking 10-15 minutes.
+    </Info>
+  </Step>
+</Steps>
+
+## Post-Deployment Configuration
+
+### Configure kubectl Access
+
+After the infrastructure is deployed, configure kubectl to access your EKS cluster:
+
+```bash
+aws eks update-kubeconfig --name dev-eks-cluster --region us-east-2
+```
+
+Verify access:
+
+```bash
+kubectl get nodes
+```
+
+You should see your EKS nodes listed.
+
+### Configure Tailscale ACLs
+
+To enable subnet routing through Tailscale, you need to update your Tailscale ACL configuration.
+
+<Steps>
+  <Step title="Open Tailscale Admin Console">
+    Navigate to [https://login.tailscale.com/admin/acls](https://login.tailscale.com/admin/acls)
+  </Step>
+
+  <Step title="Add route auto-approver configuration">
+    Add the following to your ACL configuration:
+    
+    ```json
+    {
+      "autoApprovers": {
+        "routes": {
+          "10.0.0.0/8": ["tag:aws-router"],
+          "172.16.0.0/12": ["tag:aws-router"],
+          "192.168.0.0/16": ["tag:aws-router"]
+        }
+      },
+      "tagOwners": {
+        "tag:aws-router": ["autogroup:admin"]
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="Save the ACL configuration">
+    Click "Save" to apply the changes.
+  </Step>
+</Steps>
+
+<Note>
+  This configuration automatically approves subnet routes advertised by devices tagged with `tag:aws-router`.
+</Note>
+
+## Infrastructure Components
+
+### VPC Architecture
+
+The VPC is configured with:
+
+- **CIDR Block**: `10.0.0.0/16`
+- **Public Subnets**: 3 subnets across different availability zones
+  - Used for NAT gateways, load balancers, and the Tailscale router
+- **Private Subnets**: 3 subnets across different availability zones
+  - Used for EKS nodes and other private resources
+- **NAT Gateways**: One per availability zone for high availability
+- **Internet Gateway**: For public subnet internet access
+
+### EKS Configuration
+
+The EKS cluster includes:
+
+- **Control Plane**: Managed by AWS
+- **API Endpoint**: Private access only (accessible via Tailscale)
+- **Node Groups**: Managed node groups in private subnets
+- **Default Node Size**: t3.medium (configurable)
+- **Kubernetes Version**: Latest stable version
+
+### Tailscale Subnet Router
+
+The Tailscale subnet router:
+
+- Runs on a dedicated EC2 instance in a public subnet
+- Advertises VPC CIDR blocks to your Tailscale network
+- Enables secure access to private resources (EKS API, internal services)
+- Uses ephemeral, pre-authorized auth key for automatic registration
+
+### Vault Infrastructure
+
+Vault backend infrastructure includes:
+
+- **KMS Key**: For auto-unseal capability
+- **DynamoDB Table**: For HA storage backend
+
+<Info>
+  The Vault server itself is deployed in the Platform Layer as a Helm chart.
+</Info>
+
+## Verification
+
+### Check EKS Cluster
+
+```bash
+# List nodes
+kubectl get nodes
+
+# Check cluster info
+kubectl cluster-info
+```
+
+### Verify Tailscale Connection
+
+Check the Tailscale admin console at [https://login.tailscale.com/admin/machines](https://login.tailscale.com/admin/machines):
+
+1. Find your subnet router instance
+2. Verify it's online and connected
+3. Check that subnet routes are advertised and approved
+
+### Test VPC Access
+
+Once connected to Tailscale, test connectivity:
+
+```bash
+# Ping a private IP in your VPC
+ping 10.0.1.10
+
+# Access EKS API (should work without additional VPN)
+kubectl get pods -A
+```
+
+## Outputs
+
+The infrastructure layer exports the following outputs for use by other layers:
+
+| Output | Description |
+|--------|-------------|
+| `vpc_id` | VPC identifier |
+| `private_subnet_ids` | List of private subnet IDs |
+| `public_subnet_ids` | List of public subnet IDs |
+| `eks_cluster_endpoint` | EKS API endpoint URL |
+| `eks_cluster_name` | Name of the EKS cluster |
+| `eks_cluster_certificate_authority_data` | Cluster CA certificate |
+| `vault_kms_key_id` | KMS key ID for Vault auto-unseal |
+| `vault_dynamodb_table` | DynamoDB table name for Vault storage |
+
+## Next Steps
+
+With the infrastructure layer deployed, proceed to install platform components.
+
+<Card title="Platform Layer" icon="layer-group" href="/infrastructure/platform-layer">
+  Deploy Kubernetes platform components and initialize Vault
+</Card>

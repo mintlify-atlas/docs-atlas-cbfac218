@@ -1,0 +1,558 @@
+---
+title: "RDS Module"
+description: "Amazon RDS database instances with security groups, automated backups, and encryption"
+---
+
+## Overview
+
+The RDS module creates Amazon RDS database instances (PostgreSQL, MySQL, or MariaDB) with security groups, subnet groups, parameter groups, and automated password generation.
+
+## Features
+
+<CardGroup cols={2}>
+  <Card title="Multiple Database Engines" icon="database">
+    Support for PostgreSQL, MySQL, and MariaDB
+  </Card>
+  
+  <Card title="Automated Backups" icon="clock-rotate-left">
+    Configurable backup retention and maintenance windows
+  </Card>
+  
+  <Card title="Encryption" icon="lock">
+    Encryption at rest with KMS (enabled by default)
+  </Card>
+  
+  <Card title="Security Groups" icon="shield-halved">
+    Automatic security group with CIDR and security group ID allow lists
+  </Card>
+  
+  <Card title="Password Generation" icon="key">
+    Automatic secure password generation if not provided
+  </Card>
+  
+  <Card title="Multi-AZ" icon="sitemap">
+    Optional Multi-AZ deployment for high availability
+  </Card>
+</CardGroup>
+
+## Usage Examples
+
+### Basic PostgreSQL Instance
+
+```hcl
+module "rds" {
+  source = "git@github.com:opsnorth/terraform-modules.git//rds?ref=v1.0.0"
+
+  identifier = "dev-database"
+  db_name    = "myapp"
+  username   = "admin"
+
+  vpc_id     = module.vpc.vpc_id
+  subnet_ids = module.vpc.private_subnet_ids
+
+  allowed_security_group_ids = [module.eks.cluster_security_group_id]
+
+  tags = {
+    Environment = "dev"
+  }
+}
+```
+
+<Note>
+If `password` is not provided, a random 24-character password is generated and stored in Terraform state as a sensitive output.
+</Note>
+
+### Production PostgreSQL with Multi-AZ
+
+```hcl
+module "rds" {
+  source = "git@github.com:opsnorth/terraform-modules.git//rds?ref=v1.0.0"
+
+  identifier = "prod-database"
+  db_name    = "production"
+  username   = "admin"
+
+  vpc_id     = module.vpc.vpc_id
+  subnet_ids = module.vpc.private_subnet_ids
+
+  engine         = "postgres"
+  engine_version = "15"
+  instance_class = "db.m5.large"
+
+  # Storage
+  allocated_storage     = 100
+  max_allocated_storage = 500  # Auto-scaling up to 500 GB
+  storage_type          = "gp3"
+  storage_encrypted     = true
+
+  # High availability
+  multi_az = true
+
+  # Backups
+  backup_retention_period = 30
+  deletion_protection     = true
+
+  # Performance Insights
+  performance_insights_enabled = true
+
+  # Network access
+  allowed_security_group_ids = [
+    module.eks.cluster_security_group_id,
+    module.bastion.security_group_id
+  ]
+
+  tags = {
+    Environment = "production"
+    Critical    = "true"
+  }
+}
+```
+
+### MySQL Database
+
+```hcl
+module "rds" {
+  source = "git@github.com:opsnorth/terraform-modules.git//rds?ref=v1.0.0"
+
+  identifier = "mysql-db"
+  db_name    = "wordpress"
+  username   = "wpuser"
+
+  engine         = "mysql"
+  engine_version = "8.0"
+  port           = 3306
+  family         = "mysql8.0"
+
+  vpc_id     = module.vpc.vpc_id
+  subnet_ids = module.vpc.private_subnet_ids
+
+  instance_class    = "db.t3.medium"
+  allocated_storage = 50
+
+  allowed_cidr_blocks = ["10.0.0.0/16"]
+
+  tags = {
+    Application = "wordpress"
+  }
+}
+```
+
+### With Custom Parameters
+
+```hcl
+module "rds" {
+  source = "git@github.com:opsnorth/terraform-modules.git//rds?ref=v1.0.0"
+
+  identifier = "custom-postgres"
+  db_name    = "appdb"
+  username   = "dbadmin"
+
+  vpc_id     = module.vpc.vpc_id
+  subnet_ids = module.vpc.private_subnet_ids
+
+  engine  = "postgres"
+  family  = "postgres15"
+
+  # Custom PostgreSQL parameters
+  parameters = [
+    {
+      name  = "max_connections"
+      value = "200"
+    },
+    {
+      name  = "shared_buffers"
+      value = "256MB"
+    },
+    {
+      name  = "work_mem"
+      value = "16MB"
+    },
+    {
+      name  = "maintenance_work_mem"
+      value = "128MB"
+    },
+    {
+      name  = "log_statement"
+      value = "all"
+    }
+  ]
+
+  allowed_security_group_ids = [module.eks.cluster_security_group_id]
+
+  tags = {
+    Environment = "staging"
+  }
+}
+```
+
+### Public RDS (Not Recommended)
+
+```hcl
+module "rds" {
+  source = "git@github.com:opsnorth/terraform-modules.git//rds?ref=v1.0.0"
+
+  identifier = "public-db"
+  db_name    = "testdb"
+  username   = "admin"
+
+  vpc_id     = module.vpc.vpc_id
+  subnet_ids = module.vpc.public_subnet_ids  # Public subnets
+
+  publicly_accessible = true
+
+  # Restrict access by IP
+  allowed_cidr_blocks = [
+    "203.0.113.0/24"  # Your office IP range
+  ]
+
+  tags = {
+    Environment = "demo"
+  }
+}
+```
+
+<Warning>
+Publicly accessible RDS instances should only be used for testing. Always use private subnets for production databases.
+</Warning>
+
+## Inputs
+
+| Name | Description | Type | Default | Required |
+|------|-------------|------|---------|:--------:|
+| `identifier` | RDS instance name | `string` | n/a | yes |
+| `engine` | Database engine (postgres, mysql, mariadb) | `string` | `"postgres"` | no |
+| `engine_version` | Engine version | `string` | `"15"` | no |
+| `instance_class` | Instance type | `string` | `"db.t3.micro"` | no |
+| `allocated_storage` | Storage in GB | `number` | `20` | no |
+| `max_allocated_storage` | Max storage for autoscaling (0 = disabled) | `number` | `0` | no |
+| `storage_type` | Storage type (gp2, gp3, io1) | `string` | `"gp2"` | no |
+| `storage_encrypted` | Enable encryption | `bool` | `true` | no |
+| `kms_key_id` | Custom KMS key ARN | `string` | `null` | no |
+| `db_name` | Database name | `string` | n/a | yes |
+| `username` | Master username | `string` | n/a | yes |
+| `password` | Master password (auto-generated if null) | `string` | `null` | no |
+| `port` | Database port | `number` | `5432` | no |
+| `vpc_id` | VPC ID | `string` | n/a | yes |
+| `subnet_ids` | Subnet IDs for DB subnet group | `list(string)` | n/a | yes |
+| `publicly_accessible` | Allow public access | `bool` | `false` | no |
+| `allowed_security_group_ids` | Security groups allowed to connect | `list(string)` | `[]` | no |
+| `allowed_cidr_blocks` | CIDR blocks allowed to connect | `list(string)` | `[]` | no |
+| `multi_az` | Enable Multi-AZ | `bool` | `false` | no |
+| `backup_retention_period` | Backup retention days | `number` | `7` | no |
+| `deletion_protection` | Enable deletion protection | `bool` | `false` | no |
+| `performance_insights_enabled` | Enable Performance Insights | `bool` | `false` | no |
+| `family` | Parameter group family | `string` | `"postgres15"` | no |
+| `parameters` | Custom DB parameters | `list(object)` | `[]` | no |
+| `tags` | Tags to apply | `map(string)` | `{}` | no |
+
+## Outputs
+
+| Name | Description |
+|------|-------------|
+| `db_instance_id` | RDS instance ID |
+| `db_instance_endpoint` | Connection endpoint (host:port) |
+| `db_instance_address` | Hostname |
+| `db_instance_port` | Port |
+| `db_instance_name` | Database name |
+| `db_instance_username` | Master username (sensitive) |
+| `db_instance_password` | Master password (sensitive) |
+| `security_group_id` | Security group ID |
+| `connection_string` | PostgreSQL connection string template |
+
+## Connection Strings
+
+### Using Terraform Outputs
+
+```hcl
+output "db_connection_info" {
+  value = {
+    host     = module.rds.db_instance_address
+    port     = module.rds.db_instance_port
+    database = module.rds.db_instance_name
+    username = module.rds.db_instance_username
+    password = module.rds.db_instance_password
+  }
+  sensitive = true
+}
+
+output "psql_command" {
+  value     = "psql -h ${module.rds.db_instance_address} -U ${module.rds.db_instance_username} -d ${module.rds.db_instance_name}"
+  sensitive = true
+}
+```
+
+### PostgreSQL Connection
+
+```bash
+# Using psql
+psql -h <endpoint> -U <username> -d <database>
+
+# Connection string
+postgresql://<username>:<password>@<endpoint>:<port>/<database>
+
+# With SSL
+postgresql://<username>:<password>@<endpoint>:<port>/<database>?sslmode=require
+```
+
+### MySQL Connection
+
+```bash
+# Using mysql client
+mysql -h <endpoint> -u <username> -p <database>
+
+# Connection string
+mysql://<username>:<password>@<endpoint>:<port>/<database>
+```
+
+### From Application
+
+<Tabs>
+  <Tab title="Go">
+    ```go
+    import "database/sql"
+    import _ "github.com/lib/pq"
+
+    connStr := fmt.Sprintf(
+        "postgres://%s:%s@%s:%d/%s?sslmode=require",
+        username, password, host, port, database,
+    )
+    
+    db, err := sql.Open("postgres", connStr)
+    ```
+  </Tab>
+
+  <Tab title="Python">
+    ```python
+    import psycopg2
+
+    conn = psycopg2.connect(
+        host=endpoint,
+        port=port,
+        database=database,
+        user=username,
+        password=password,
+        sslmode='require'
+    )
+    ```
+  </Tab>
+
+  <Tab title="Node.js">
+    ```javascript
+    const { Client } = require('pg')
+
+    const client = new Client({
+      host: endpoint,
+      port: port,
+      database: database,
+      user: username,
+      password: password,
+      ssl: { rejectUnauthorized: false }
+    })
+
+    await client.connect()
+    ```
+  </Tab>
+</Tabs>
+
+## Security Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Private Subnets" icon="lock">
+    Always deploy RDS in private subnets without public access.
+  </Card>
+  
+  <Card title="Encryption" icon="shield-halved">
+    Enable encryption at rest using KMS keys for sensitive data.
+  </Card>
+  
+  <Card title="Strong Passwords" icon="key">
+    Use auto-generated passwords or strong custom passwords (min 24 characters).
+  </Card>
+  
+  <Card title="Least Privilege" icon="user-lock">
+    Restrict security group access to only required sources.
+  </Card>
+  
+  <Card title="Backup Retention" icon="clock-rotate-left">
+    Set appropriate backup retention (7-35 days for production).
+  </Card>
+  
+  <Card title="Deletion Protection" icon="ban">
+    Enable deletion protection for production databases.
+  </Card>
+</CardGroup>
+
+## Performance Tuning
+
+### Instance Sizing
+
+| Workload | Instance Class | Storage |
+|----------|----------------|----------|
+| Development | db.t3.micro | 20 GB gp2 |
+| Small Production | db.t3.medium | 100 GB gp3 |
+| Medium Production | db.m5.large | 500 GB gp3 |
+| Large Production | db.m5.2xlarge | 1 TB io1 |
+
+### Storage Auto-Scaling
+
+```hcl
+module "rds" {
+  source = "git@github.com:opsnorth/terraform-modules.git//rds?ref=v1.0.0"
+
+  allocated_storage     = 100   # Initial size
+  max_allocated_storage = 500   # Max auto-scale size
+  storage_type          = "gp3" # Better IOPS than gp2
+}
+```
+
+### Performance Insights
+
+Enable for production databases:
+
+```hcl
+module "rds" {
+  source = "git@github.com:opsnorth/terraform-modules.git//rds?ref=v1.0.0"
+
+  performance_insights_enabled = true
+}
+```
+
+View insights in AWS Console:
+```
+RDS → Databases → <instance> → Monitoring → Performance Insights
+```
+
+## Backup and Recovery
+
+### Automated Backups
+
+```hcl
+module "rds" {
+  source = "git@github.com:opsnorth/terraform-modules.git//rds?ref=v1.0.0"
+
+  backup_retention_period = 30  # Keep backups for 30 days
+  
+  # Optional: Specify backup window (UTC)
+  preferred_backup_window = "03:00-04:00"
+}
+```
+
+### Manual Snapshot
+
+```bash
+aws rds create-db-snapshot \
+  --db-instance-identifier prod-database \
+  --db-snapshot-identifier prod-database-snapshot-$(date +%Y%m%d)
+```
+
+### Restore from Snapshot
+
+```bash
+aws rds restore-db-instance-from-db-snapshot \
+  --db-instance-identifier restored-database \
+  --db-snapshot-identifier prod-database-snapshot-20240115
+```
+
+## Troubleshooting
+
+### Cannot Connect to Database
+
+**Check security group rules:**
+```bash
+aws ec2 describe-security-groups \
+  --group-ids <security-group-id>
+```
+
+**Verify subnet routing:**
+```bash
+aws ec2 describe-route-tables \
+  --filters "Name=association.subnet-id,Values=<subnet-id>"
+```
+
+**Test connection from EC2:**
+```bash
+# SSH to EC2 instance in same VPC
+psql -h <endpoint> -U <username> -d <database>
+```
+
+### Performance Issues
+
+**Check Performance Insights:**
+- RDS Console → Performance Insights
+- Look for slow queries and high wait events
+
+**Review CloudWatch metrics:**
+```bash
+aws cloudwatch get-metric-statistics \
+  --namespace AWS/RDS \
+  --metric-name CPUUtilization \
+  --dimensions Name=DBInstanceIdentifier,Value=prod-database \
+  --start-time 2024-01-15T00:00:00Z \
+  --end-time 2024-01-15T23:59:59Z \
+  --period 3600 \
+  --statistics Average
+```
+
+### Storage Full
+
+**Enable auto-scaling:**
+```hcl
+max_allocated_storage = 500  # Allows scaling up to 500 GB
+```
+
+**Or increase manually:**
+```bash
+aws rds modify-db-instance \
+  --db-instance-identifier prod-database \
+  --allocated-storage 200 \
+  --apply-immediately
+```
+
+## Cost Optimization
+
+<AccordionGroup>
+  <Accordion title="Right-Size Instances">
+    Start with smaller instances and scale based on CloudWatch metrics. Over-provisioning wastes money.
+
+    **Development:** db.t3.micro (~$15/month)
+    **Production:** db.m5.large (~$150/month)
+  </Accordion>
+
+  <Accordion title="Use gp3 Instead of gp2">
+    gp3 provides better baseline performance at lower cost:
+    - 100 GB gp2: ~$11.50/month
+    - 100 GB gp3: ~$10.00/month
+  </Accordion>
+
+  <Accordion title="Reduce Backup Retention">
+    Shorter retention saves on backup storage costs:
+    - Development: 7 days
+    - Production: 14-30 days
+  </Accordion>
+
+  <Accordion title="Use Single-AZ for Dev">
+    Multi-AZ doubles RDS costs. Only use in production:
+    - Single-AZ: $150/month
+    - Multi-AZ: $300/month
+  </Accordion>
+</AccordionGroup>
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="VPC Module" icon="network-wired" href="/terraform-modules/vpc">
+    Create VPC and subnets for RDS
+  </Card>
+  
+  <Card title="EKS Module" icon="kubernetes" href="/terraform-modules/eks">
+    Connect RDS to EKS workloads
+  </Card>
+  
+  <Card title="K8s Scheduler Configuration" icon="ship" href="/k8s-scheduler/configuration">
+    Configure database connection
+  </Card>
+  
+  <Card title="Infrastructure Guide" icon="book" href="/infrastructure/overview">
+    Complete deployment workflow
+  </Card>
+</CardGroup>

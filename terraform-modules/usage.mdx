@@ -1,0 +1,539 @@
+---
+title: "Module Usage Guide"
+description: "Common patterns, best practices, and examples for using Terraform modules"
+---
+
+## Module Reference Syntax
+
+### Git Source with Version
+
+Always use version tags to ensure reproducible deployments:
+
+```hcl
+module "vpc" {
+  source = "git@github.com:opsnorth/terraform-modules.git//vpc?ref=v1.0.0"
+  # Module inputs...
+}
+```
+
+### Branch Reference
+
+For testing or development:
+
+```hcl
+module "vpc" {
+  source = "git@github.com:opsnorth/terraform-modules.git//vpc?ref=main"
+  # Module inputs...
+}
+```
+
+<Warning>
+Avoid using branch references in production. Always pin to specific version tags.
+</Warning>
+
+### Commit SHA Reference
+
+For maximum stability:
+
+```hcl
+module "vpc" {
+  source = "git@github.com:opsnorth/terraform-modules.git//vpc?ref=abc123def456"
+  # Module inputs...
+}
+```
+
+## Common Patterns
+
+### Multi-Environment Setup
+
+Organize modules across environments:
+
+```
+terraform/
+├── environments/
+│   ├── dev/
+│   │   ├── main.tf
+│   │   ├── variables.tf
+│   │   └── terraform.tfvars
+│   ├── staging/
+│   │   ├── main.tf
+│   │   ├── variables.tf
+│   │   └── terraform.tfvars
+│   └── production/
+│       ├── main.tf
+│       ├── variables.tf
+│       └── terraform.tfvars
+└── modules/
+    └── (local modules if needed)
+```
+
+**Example dev environment:**
+
+```hcl
+# environments/dev/main.tf
+
+module "vpc" {
+  source = "git@github.com:opsnorth/terraform-modules.git//vpc?ref=v1.0.0"
+  
+  vpc_name           = "${var.environment}-vpc"
+  vpc_cidr           = "10.0.0.0/16"
+  aws_region         = var.aws_region
+  availability_zones = var.availability_zones
+  
+  public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24"]
+  private_subnet_cidrs = ["10.0.11.0/24", "10.0.12.0/24"]
+  
+  # Dev: Single NAT for cost savings
+  enable_nat_gateway = true
+  single_nat_gateway = true
+  
+  tags = var.tags
+}
+```
+
+**Example production environment:**
+
+```hcl
+# environments/production/main.tf
+
+module "vpc" {
+  source = "git@github.com:opsnorth/terraform-modules.git//vpc?ref=v1.0.0"
+  
+  vpc_name           = "${var.environment}-vpc"
+  vpc_cidr           = "10.0.0.0/16"
+  aws_region         = var.aws_region
+  availability_zones = var.availability_zones
+  
+  public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  private_subnet_cidrs = ["10.0.11.0/24", "10.0.12.0/24", "10.0.13.0/24"]
+  
+  # Production: NAT per AZ for HA
+  enable_nat_gateway = true
+  single_nat_gateway = false
+  
+  enable_s3_endpoint       = true
+  enable_dynamodb_endpoint = true
+  enable_flow_logs         = true
+  
+  tags = var.tags
+}
+```
+
+### Module Composition
+
+Build complex infrastructure by composing modules:
+
+```hcl
+# Network layer
+module "vpc" {
+  source = "git@github.com:opsnorth/terraform-modules.git//vpc?ref=v1.0.0"
+  # VPC configuration
+}
+
+# Compute layer
+module "eks" {
+  source = "git@github.com:opsnorth/terraform-modules.git//eks?ref=v1.0.0"
+  
+  cluster_name       = "app-cluster"
+  private_subnet_ids = module.vpc.private_subnet_ids
+}
+
+# Data layer
+module "rds" {
+  source = "git@github.com:opsnorth/terraform-modules.git//rds?ref=v1.0.0"
+  
+  identifier = "app-db"
+  vpc_id     = module.vpc.vpc_id
+  subnet_ids = module.vpc.private_subnet_ids
+  
+  allowed_security_group_ids = [module.eks.cluster_security_group_id]
+}
+
+# Secrets layer
+module "vault" {
+  source = "git@github.com:opsnorth/terraform-modules.git//vault?ref=v1.0.0"
+  
+  cluster_name      = module.eks.cluster_id
+  oidc_provider_arn = module.eks.oidc_provider_arn
+  oidc_provider_url = module.eks.oidc_provider_url
+}
+```
+
+### Using Module Outputs
+
+Pass outputs between modules:
+
+```hcl
+# VPC module outputs
+output "vpc_outputs" {
+  value = {
+    vpc_id             = module.vpc.vpc_id
+    private_subnet_ids = module.vpc.private_subnet_ids
+    public_subnet_ids  = module.vpc.public_subnet_ids
+  }
+}
+
+# Reference in other modules
+module "eks" {
+  source             = "git@github.com:opsnorth/terraform-modules.git//eks?ref=v1.0.0"
+  private_subnet_ids = module.vpc.private_subnet_ids
+}
+
+# Reference in resources
+resource "aws_security_group" "app" {
+  vpc_id = module.vpc.vpc_id
+  # Security group rules...
+}
+```
+
+## Variable Management
+
+### Using terraform.tfvars
+
+Store environment-specific values:
+
+```hcl
+# environments/production/terraform.tfvars
+
+environment        = "production"
+aws_region         = "us-east-1"
+availability_zones = ["us-east-1a", "us-east-1b", "us-east-1c"]
+
+vpc_cidr             = "10.0.0.0/16"
+public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+private_subnet_cidrs = ["10.0.11.0/24", "10.0.12.0/24", "10.0.13.0/24"]
+
+eks_version              = "1.34"
+eks_node_instance_types  = ["m5.large"]
+eks_node_desired_size    = 3
+
+rds_instance_class      = "db.t3.medium"
+rds_allocated_storage   = 100
+
+tags = {
+  Environment = "production"
+  Team        = "platform"
+  ManagedBy   = "terraform"
+}
+```
+
+### Using Variable Files
+
+Load different configurations:
+
+```bash
+# Development
+terraform apply -var-file="environments/dev/terraform.tfvars"
+
+# Production
+terraform apply -var-file="environments/production/terraform.tfvars"
+```
+
+### Environment Variables
+
+Use TF_VAR prefix:
+
+```bash
+export TF_VAR_environment="production"
+export TF_VAR_aws_region="us-east-1"
+
+terraform apply
+```
+
+## State Management
+
+### Remote State Backend
+
+Always use remote state for team collaboration:
+
+```hcl
+terraform {
+  backend "s3" {
+    bucket         = "my-terraform-state"
+    key            = "production/vpc/terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "terraform-state-lock"
+    encrypt        = true
+  }
+}
+```
+
+### State Isolation
+
+Isolate state by layer or component:
+
+```
+state/
+├── production/
+│   ├── network/terraform.tfstate      # VPC
+│   ├── compute/terraform.tfstate      # EKS
+│   ├── data/terraform.tfstate         # RDS
+│   └── secrets/terraform.tfstate      # Vault
+└── dev/
+    └── ...
+```
+
+### Remote State Data Source
+
+Reference outputs from other state files:
+
+```hcl
+data "terraform_remote_state" "network" {
+  backend = "s3"
+  config = {
+    bucket = "my-terraform-state"
+    key    = "production/network/terraform.tfstate"
+    region = "us-east-1"
+  }
+}
+
+module "eks" {
+  source             = "git@github.com:opsnorth/terraform-modules.git//eks?ref=v1.0.0"
+  private_subnet_ids = data.terraform_remote_state.network.outputs.private_subnet_ids
+}
+```
+
+## Tagging Strategy
+
+### Consistent Tags Across Modules
+
+```hcl
+locals {
+  common_tags = {
+    Environment = var.environment
+    Team        = "platform"
+    ManagedBy   = "terraform"
+    CostCenter  = "engineering"
+    Project     = "shipyard"
+  }
+}
+
+module "vpc" {
+  source = "git@github.com:opsnorth/terraform-modules.git//vpc?ref=v1.0.0"
+  tags   = local.common_tags
+}
+
+module "eks" {
+  source = "git@github.com:opsnorth/terraform-modules.git//eks?ref=v1.0.0"
+  tags   = local.common_tags
+}
+```
+
+### Provider-Level Default Tags
+
+```hcl
+provider "aws" {
+  region = var.aws_region
+  
+  default_tags {
+    tags = {
+      Terraform   = "true"
+      Environment = var.environment
+      Project     = "shipyard"
+    }
+  }
+}
+```
+
+## Testing Modules
+
+### Plan Before Apply
+
+Always review changes:
+
+```bash
+terraform plan -out=tfplan
+terraform show tfplan
+terraform apply tfplan
+```
+
+### Target Specific Modules
+
+Test individual modules:
+
+```bash
+# Plan only VPC changes
+terraform plan -target=module.vpc
+
+# Apply only EKS changes
+terraform apply -target=module.eks
+```
+
+<Warning>
+Using `-target` should be temporary. Always run a full plan/apply afterward to ensure consistency.
+</Warning>
+
+### Validate Configuration
+
+```bash
+# Check syntax
+terraform validate
+
+# Format code
+terraform fmt -recursive
+
+# Validate with variables
+terraform validate -var-file="terraform.tfvars"
+```
+
+## Module Updates
+
+### Upgrading Module Versions
+
+1. **Review changelog:**
+   ```bash
+   git log v1.0.0..v1.1.0 -- vpc/
+   ```
+
+2. **Update source version:**
+   ```hcl
+   module "vpc" {
+     source = "git@github.com:opsnorth/terraform-modules.git//vpc?ref=v1.1.0"
+   }
+   ```
+
+3. **Re-initialize:**
+   ```bash
+   terraform init -upgrade
+   ```
+
+4. **Plan and review:**
+   ```bash
+   terraform plan
+   ```
+
+5. **Apply changes:**
+   ```bash
+   terraform apply
+   ```
+
+### Pinning Versions in CI/CD
+
+```yaml
+# .github/workflows/terraform.yml
+
+name: Terraform
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+      
+      - name: Terraform Init
+        run: terraform init
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      
+      - name: Terraform Plan
+        run: terraform plan -no-color
+      
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/main'
+        run: terraform apply -auto-approve
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Version Pinning" icon="thumbtack">
+    Always pin module versions using Git tags. Never use branches in production.
+  </Card>
+  
+  <Card title="State Locking" icon="lock">
+    Use DynamoDB for state locking to prevent concurrent modifications.
+  </Card>
+  
+  <Card title="Environment Isolation" icon="layer-group">
+    Separate state files and AWS accounts per environment.
+  </Card>
+  
+  <Card title="Least Privilege IAM" icon="shield-halved">
+    Grant minimum required permissions. Use IAM roles over access keys.
+  </Card>
+  
+  <Card title="Module Documentation" icon="book">
+    Document your usage patterns and custom configurations.
+  </Card>
+  
+  <Card title="Change Review" icon="eye">
+    Always review terraform plan output before applying.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Module Not Found
+
+**Error:**
+```
+Error: Module not found
+```
+
+**Solution:**
+```bash
+# Ensure Git SSH access is configured
+ssh -T git@github.com
+
+# Re-initialize with upgrade flag
+terraform init -upgrade
+```
+
+### State Lock Errors
+
+**Error:**
+```
+Error: Error acquiring the state lock
+```
+
+**Solution:**
+```bash
+# List locks
+aws dynamodb scan --table-name terraform-state-lock
+
+# Force unlock (use with caution)
+terraform force-unlock <LOCK_ID>
+```
+
+### Module Output Not Available
+
+**Error:**
+```
+Error: Unsupported attribute
+```
+
+**Solution:**
+Check if the output exists in the module:
+```bash
+terraform output -module=vpc
+```
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="VPC Module" icon="network-wired" href="/terraform-modules/vpc">
+    Complete VPC infrastructure
+  </Card>
+  
+  <Card title="EKS Module" icon="kubernetes" href="/terraform-modules/eks">
+    Kubernetes cluster setup
+  </Card>
+  
+  <Card title="State Module" icon="folder" href="/terraform-modules/state">
+    Remote state backend
+  </Card>
+  
+  <Card title="Infrastructure Guide" icon="book" href="/infrastructure/overview">
+    Complete deployment workflow
+  </Card>
+</CardGroup>

@@ -1,0 +1,672 @@
+---
+title: Organizations & Teams
+description: Organization and team management endpoints
+---
+
+The K8s Scheduler uses a hierarchical RBAC model with Organizations, Teams, and Members. Organizations contain teams, and teams contain members with specific roles.
+
+## Organizations
+
+### List User's Organizations
+
+```http
+GET /api/orgs
+```
+
+Returns all organizations the authenticated user is a member of.
+
+**Authentication:** Required (session or API key)
+
+**Response:**
+
+<ResponseField name="id" type="string">
+  Organization UUID
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Organization display name
+</ResponseField>
+
+<ResponseField name="slug" type="string">
+  URL-safe organization identifier
+</ResponseField>
+
+<ResponseField name="plan" type="string">
+  Billing plan ID (e.g., "free", "business", "enterprise")
+</ResponseField>
+
+<ResponseField name="aiContext" type="string">
+  AI template generation context (optional)
+</ResponseField>
+
+<ResponseField name="createdAt" type="string">
+  ISO 8601 timestamp
+</ResponseField>
+
+**Example:**
+
+```bash
+curl -X GET "https://your-domain.com/api/orgs" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+```json
+[
+  {
+    "id": "org_123abc",
+    "name": "Acme Corporation",
+    "slug": "acme-corp",
+    "plan": "business",
+    "aiContext": "We build developer tools for cloud infrastructure",
+    "createdAt": "2024-01-15T10:00:00Z"
+  }
+]
+```
+
+---
+
+### Get Organization Details
+
+```http
+GET /api/orgs/{orgId}
+```
+
+**Path Parameters:**
+
+<ParamField path="orgId" type="string" required>
+  Organization UUID
+</ParamField>
+
+**Authentication:** Required (must be organization member)
+
+**Response:**
+
+<ResponseField name="id" type="string">
+  Organization UUID
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Organization display name
+</ResponseField>
+
+<ResponseField name="slug" type="string">
+  URL-safe organization identifier
+</ResponseField>
+
+<ResponseField name="plan" type="string">
+  Billing plan ID
+</ResponseField>
+
+<ResponseField name="aiContext" type="string">
+  AI template generation context
+</ResponseField>
+
+<ResponseField name="createdAt" type="string">
+  ISO 8601 timestamp
+</ResponseField>
+
+**Example:**
+
+```bash
+curl -X GET "https://your-domain.com/api/orgs/org_123abc" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+---
+
+### Update Organization
+
+```http
+PUT /api/orgs/{orgId}
+```
+
+Update organization name and AI context. Requires `org_owner` or `org_admin` role.
+
+**Path Parameters:**
+
+<ParamField path="orgId" type="string" required>
+  Organization UUID
+</ParamField>
+
+**Request Body:**
+
+<ParamField body="name" type="string" optional>
+  New organization name
+</ParamField>
+
+<ParamField body="aiContext" type="string" optional>
+  AI context for template generation
+</ParamField>
+
+**Example:**
+
+```bash
+curl -X PUT "https://your-domain.com/api/orgs/org_123abc" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Acme Corp",
+    "aiContext": "Cloud infrastructure tools for developers"
+  }'
+```
+
+---
+
+## Teams
+
+### List Organization Teams
+
+```http
+GET /api/orgs/{orgId}/teams
+```
+
+List all teams in an organization. Regular members only see teams they belong to; owners and admins see all teams.
+
+**Path Parameters:**
+
+<ParamField path="orgId" type="string" required>
+  Organization UUID
+</ParamField>
+
+**Response:**
+
+<ResponseField name="id" type="string">
+  Team UUID
+</ResponseField>
+
+<ResponseField name="orgId" type="string">
+  Parent organization UUID
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Team display name
+</ResponseField>
+
+<ResponseField name="slug" type="string">
+  URL-safe team identifier
+</ResponseField>
+
+<ResponseField name="createdAt" type="string">
+  ISO 8601 timestamp
+</ResponseField>
+
+**Example:**
+
+```bash
+curl -X GET "https://your-domain.com/api/orgs/org_123abc/teams" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+---
+
+### Create Team
+
+```http
+POST /api/orgs/{orgId}/teams
+```
+
+Create a new team. Requires `org_owner` or `org_admin` role. The creator is automatically added as team admin.
+
+**Path Parameters:**
+
+<ParamField path="orgId" type="string" required>
+  Organization UUID
+</ParamField>
+
+**Request Body:**
+
+<ParamField body="name" type="string" required>
+  Team name
+</ParamField>
+
+**Response:** 201 Created with team object
+
+**Example:**
+
+```bash
+curl -X POST "https://your-domain.com/api/orgs/org_123abc/teams" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Engineering"}'
+```
+
+---
+
+### Get Team Details
+
+```http
+GET /api/orgs/{orgId}/teams/{teamId}
+```
+
+**Path Parameters:**
+
+<ParamField path="orgId" type="string" required>
+  Organization UUID
+</ParamField>
+
+<ParamField path="teamId" type="string" required>
+  Team UUID
+</ParamField>
+
+---
+
+### Update Team
+
+```http
+PUT /api/orgs/{orgId}/teams/{teamId}
+```
+
+Update team name. Requires `org_owner`, `org_admin`, or `team_admin` role.
+
+**Request Body:**
+
+<ParamField body="name" type="string" required>
+  New team name
+</ParamField>
+
+---
+
+### Delete Team
+
+```http
+DELETE /api/orgs/{orgId}/teams/{teamId}
+```
+
+Delete a team. Requires `org_owner` or `org_admin` role.
+
+**Response:** 204 No Content
+
+---
+
+## Organization Members
+
+### List Organization Members
+
+```http
+GET /api/orgs/{orgId}/members
+```
+
+**Response:**
+
+<ResponseField name="id" type="string">
+  User ID (also used for member operations)
+</ResponseField>
+
+<ResponseField name="userId" type="string">
+  User UUID
+</ResponseField>
+
+<ResponseField name="email" type="string">
+  User email address
+</ResponseField>
+
+<ResponseField name="role" type="string">
+  Organization role: `org_owner`, `org_admin`, or `org_member`
+</ResponseField>
+
+<ResponseField name="joinedAt" type="string">
+  ISO 8601 timestamp
+</ResponseField>
+
+**Example:**
+
+```bash
+curl -X GET "https://your-domain.com/api/orgs/org_123abc/members" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+---
+
+### Update Organization Member Role
+
+```http
+PUT /api/orgs/{orgId}/members/{memberId}
+```
+
+Change a member's organization role. Requires `org_owner` role.
+
+**Request Body:**
+
+<ParamField body="role" type="string" required>
+  New role: `org_owner`, `org_admin`, or `org_member`
+</ParamField>
+
+**Response:** 204 No Content
+
+---
+
+### Remove Organization Member
+
+```http
+DELETE /api/orgs/{orgId}/members/{memberId}
+```
+
+Remove a member from the organization. Requires `org_owner` role.
+
+**Response:** 204 No Content
+
+---
+
+## Team Members
+
+### List Team Members
+
+```http
+GET /api/orgs/{orgId}/teams/{teamId}/members
+```
+
+**Response:**
+
+<ResponseField name="id" type="string">
+  User ID
+</ResponseField>
+
+<ResponseField name="userId" type="string">
+  User UUID
+</ResponseField>
+
+<ResponseField name="email" type="string">
+  User email address
+</ResponseField>
+
+<ResponseField name="role" type="string">
+  Team role: `team_admin`, `team_developer`, or `team_viewer`
+</ResponseField>
+
+<ResponseField name="joinedAt" type="string">
+  ISO 8601 timestamp
+</ResponseField>
+
+---
+
+### Update Team Member Role
+
+```http
+PUT /api/orgs/{orgId}/teams/{teamId}/members/{memberId}
+```
+
+Requires `org_owner`, `org_admin`, or `team_admin` role.
+
+**Request Body:**
+
+<ParamField body="role" type="string" required>
+  New role: `team_admin`, `team_developer`, or `team_viewer`
+</ParamField>
+
+**Response:** 204 No Content
+
+---
+
+### Remove Team Member
+
+```http
+DELETE /api/orgs/{orgId}/teams/{teamId}/members/{memberId}
+```
+
+**Response:** 204 No Content
+
+---
+
+## Team Invitations
+
+### List Team Invites
+
+```http
+GET /api/orgs/{orgId}/teams/{teamId}/invites
+```
+
+**Response:**
+
+<ResponseField name="id" type="string">
+  Invite UUID
+</ResponseField>
+
+<ResponseField name="email" type="string">
+  Invited user's email
+</ResponseField>
+
+<ResponseField name="role" type="string">
+  Role the user will receive: `team_admin`, `team_developer`, or `team_viewer`
+</ResponseField>
+
+<ResponseField name="expiresAt" type="string">
+  ISO 8601 timestamp when invite expires
+</ResponseField>
+
+<ResponseField name="createdAt" type="string">
+  ISO 8601 timestamp
+</ResponseField>
+
+---
+
+### Create Team Invite
+
+```http
+POST /api/orgs/{orgId}/teams/{teamId}/invites
+```
+
+Invite a user to join a team. Requires `org_owner`, `org_admin`, or `team_admin` role. If email sender is configured, an invite email is automatically sent.
+
+**Request Body:**
+
+<ParamField body="email" type="string" required>
+  Email address to invite
+</ParamField>
+
+<ParamField body="role" type="string" optional>
+  Team role (default: `team_developer`)
+</ParamField>
+
+**Response:** 201 Created
+
+<ResponseField name="id" type="string">
+  Invite UUID
+</ResponseField>
+
+<ResponseField name="token" type="string">
+  Invite token for URL generation
+</ResponseField>
+
+**Example:**
+
+```bash
+curl -X POST "https://your-domain.com/api/orgs/org_123abc/teams/team_456def/invites" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "newdev@example.com",
+    "role": "team_developer"
+  }'
+```
+
+---
+
+### Delete Team Invite
+
+```http
+DELETE /api/orgs/{orgId}/teams/{teamId}/invites/{inviteId}
+```
+
+Cancel a pending invitation.
+
+**Response:** 204 No Content
+
+---
+
+### Accept Invite
+
+```http
+POST /api/invites/accept
+```
+
+Accept a team invitation using the invite token. The authenticated user is added to both the organization (as `org_member`) and the team with the specified role.
+
+**Request Body:**
+
+<ParamField body="token" type="string" required>
+  Invite token from invitation URL or email
+</ParamField>
+
+**Response:**
+
+<ResponseField name="teamId" type="string">
+  Team UUID the user joined
+</ResponseField>
+
+<ResponseField name="orgId" type="string">
+  Organization UUID
+</ResponseField>
+
+<ResponseField name="role" type="string">
+  Team role assigned
+</ResponseField>
+
+**Example:**
+
+```bash
+curl -X POST "https://your-domain.com/api/invites/accept" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"token": "inv_abc123xyz"}'
+```
+
+---
+
+## Current User Context
+
+### Get Current User
+
+```http
+GET /api/me
+```
+
+Returns the authenticated user's profile, organizations, and current team context.
+
+**Response:**
+
+<ResponseField name="id" type="string">
+  User UUID
+</ResponseField>
+
+<ResponseField name="email" type="string">
+  User email
+</ResponseField>
+
+<ResponseField name="username" type="string">
+  Unique username
+</ResponseField>
+
+<ResponseField name="tier" type="string">
+  Subscription tier
+</ResponseField>
+
+<ResponseField name="platformRole" type="string">
+  Platform-level role (e.g., `platform_admin`)
+</ResponseField>
+
+<ResponseField name="orgs" type="array">
+  Array of organizations with user's role in each
+</ResponseField>
+
+<ResponseField name="defaultTeam" type="object">
+  Current active team context
+</ResponseField>
+
+**Example:**
+
+```bash
+curl -X GET "https://your-domain.com/api/me" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+---
+
+### Switch Team Context
+
+```http
+POST /api/teams/switch
+```
+
+Change the active team context in the session. This affects which team's resources are shown and which team new deployments are created under.
+
+**Request Body:**
+
+<ParamField body="team_id" type="string" required>
+  Team UUID to switch to (empty string to show all teams)
+</ParamField>
+
+**Response:**
+
+<ResponseField name="success" type="boolean">
+  Whether the switch succeeded
+</ResponseField>
+
+<ResponseField name="team_id" type="string">
+  Active team ID (or null if showing all)
+</ResponseField>
+
+**Example:**
+
+```bash
+curl -X POST "https://your-domain.com/api/teams/switch" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"team_id": "team_456def"}'
+```
+
+---
+
+## Audit Logs
+
+### List Organization Audit Logs
+
+```http
+GET /api/orgs/{orgId}/audit
+```
+
+Retrieve audit logs for organization activities. Requires `org_owner` or `org_admin` role.
+
+**Response:**
+
+<ResponseField name="id" type="string">
+  Log entry UUID
+</ResponseField>
+
+<ResponseField name="userId" type="string">
+  User who performed the action
+</ResponseField>
+
+<ResponseField name="userEmail" type="string">
+  User's email
+</ResponseField>
+
+<ResponseField name="action" type="string">
+  Action type (e.g., "create", "update", "delete")
+</ResponseField>
+
+<ResponseField name="resourceType" type="string">
+  Type of resource (e.g., "deployment", "template", "secret")
+</ResponseField>
+
+<ResponseField name="resourceId" type="string">
+  Resource identifier
+</ResponseField>
+
+<ResponseField name="resourceName" type="string">
+  Human-readable resource name
+</ResponseField>
+
+<ResponseField name="result" type="string">
+  Result: "success" or "failure"
+</ResponseField>
+
+<ResponseField name="createdAt" type="string">
+  ISO 8601 timestamp
+</ResponseField>
+
+**Example:**
+
+```bash
+curl -X GET "https://your-domain.com/api/orgs/org_123abc/audit" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```

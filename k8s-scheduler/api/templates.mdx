@@ -1,0 +1,589 @@
+---
+title: Templates
+description: Template management and AI generation endpoints
+---
+
+Templates define the blueprint for deployments. They specify container images, resources, environment variables, and secrets. Templates support multiple visibility scopes: private (user-only), team, org, and public.
+
+## Template Operations
+
+### List Templates
+
+```http
+GET /api/templates
+```
+
+Returns all templates accessible to the authenticated user, including:
+- System templates (available to all users)
+- User's private templates
+- Templates shared with user's teams
+- Templates shared with user's organizations
+- Public templates
+
+**Authentication:** Required (session or API key with `templates:read` scope)
+
+**Response:**
+
+<ResponseField name="name" type="string">
+  Template identifier (URL-safe, unique)
+</ResponseField>
+
+<ResponseField name="displayName" type="string">
+  Human-readable template name
+</ResponseField>
+
+<ResponseField name="description" type="string">
+  Template description
+</ResponseField>
+
+<ResponseField name="category" type="string">
+  Category (e.g., "web", "database", "ai")
+</ResponseField>
+
+<ResponseField name="image" type="string">
+  Primary container image
+</ResponseField>
+
+<ResponseField name="containerPort" type="integer">
+  Primary container port
+</ResponseField>
+
+<ResponseField name="cpuRequest" type="string">
+  CPU request (e.g., "100m")
+</ResponseField>
+
+<ResponseField name="cpuLimit" type="string">
+  CPU limit (e.g., "500m")
+</ResponseField>
+
+<ResponseField name="memoryRequest" type="string">
+  Memory request (e.g., "128Mi")
+</ResponseField>
+
+<ResponseField name="memoryLimit" type="string">
+  Memory limit (e.g., "512Mi")
+</ResponseField>
+
+<ResponseField name="healthCheckPath" type="string">
+  HTTP health check path (e.g., "/health")
+</ResponseField>
+
+<ResponseField name="enabled" type="boolean">
+  Whether the template is enabled
+</ResponseField>
+
+<ResponseField name="hasConfigMap" type="boolean">
+  Whether a ConfigMap is synced for this template
+</ResponseField>
+
+<ResponseField name="isSystem" type="boolean">
+  Whether this is a built-in system template
+</ResponseField>
+
+<ResponseField name="envVars" type="array">
+  Array of environment variable definitions
+</ResponseField>
+
+<ResponseField name="visibility" type="string">
+  Visibility scope: `private`, `team`, `org`, or `public`
+</ResponseField>
+
+<ResponseField name="orgId" type="string">
+  Organization ID (for org-scoped templates)
+</ResponseField>
+
+<ResponseField name="teamId" type="string">
+  Team ID (for team-scoped templates)
+</ResponseField>
+
+<ResponseField name="orgName" type="string">
+  Organization name
+</ResponseField>
+
+<ResponseField name="teamName" type="string">
+  Team name
+</ResponseField>
+
+<ResponseField name="spec" type="string">
+  Full YAML specification
+</ResponseField>
+
+**Example:**
+
+```bash
+curl -X GET "https://your-domain.com/api/templates" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+```json
+[
+  {
+    "name": "nginx",
+    "displayName": "NGINX Web Server",
+    "description": "High-performance HTTP server and reverse proxy",
+    "category": "web",
+    "image": "nginx:latest",
+    "containerPort": 80,
+    "cpuRequest": "100m",
+    "cpuLimit": "500m",
+    "memoryRequest": "128Mi",
+    "memoryLimit": "512Mi",
+    "healthCheckPath": "/",
+    "enabled": true,
+    "hasConfigMap": true,
+    "isSystem": true,
+    "visibility": "public"
+  }
+]
+```
+
+---
+
+### Get Template Details
+
+```http
+GET /api/templates/{name}
+```
+
+Retrieve detailed information about a specific template, including full YAML specification.
+
+**Path Parameters:**
+
+<ParamField path="name" type="string" required>
+  Template name
+</ParamField>
+
+**Authentication:** Required
+
+**Response:**
+
+Same fields as list endpoint, plus full `spec` field with YAML specification.
+
+**Example:**
+
+```bash
+curl -X GET "https://your-domain.com/api/templates/nginx" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+---
+
+### Create Template
+
+```http
+POST /api/templates
+```
+
+Create a new template. Templates are synced to a Kubernetes ConfigMap for use by the operator.
+
+**Authentication:** Required (`templates:write` scope)
+
+**Request Body:**
+
+<ParamField body="name" type="string" required>
+  Template identifier (must be URL-safe, alphanumeric + hyphens)
+</ParamField>
+
+<ParamField body="displayName" type="string" required>
+  Human-readable name
+</ParamField>
+
+<ParamField body="description" type="string" optional>
+  Template description
+</ParamField>
+
+<ParamField body="category" type="string" optional>
+  Category for grouping (e.g., "web", "database")
+</ParamField>
+
+<ParamField body="image" type="string" optional>
+  Container image
+</ParamField>
+
+<ParamField body="containerPort" type="integer" optional>
+  Container port (default: 8080)
+</ParamField>
+
+<ParamField body="cpuRequest" type="string" optional>
+  CPU request (default: "100m")
+</ParamField>
+
+<ParamField body="cpuLimit" type="string" optional>
+  CPU limit (default: "500m")
+</ParamField>
+
+<ParamField body="memoryRequest" type="string" optional>
+  Memory request (default: "128Mi")
+</ParamField>
+
+<ParamField body="memoryLimit" type="string" optional>
+  Memory limit (default: "512Mi")
+</ParamField>
+
+<ParamField body="healthCheckPath" type="string" optional>
+  HTTP health check path (default: "/")
+</ParamField>
+
+<ParamField body="enabled" type="boolean" optional>
+  Enable the template (default: true)
+</ParamField>
+
+<ParamField body="hasConfigMap" type="boolean" optional>
+  Whether to sync a ConfigMap
+</ParamField>
+
+<ParamField body="envVars" type="array" optional>
+  Array of environment variable definitions
+</ParamField>
+
+<ParamField body="visibility" type="string" optional>
+  Visibility scope: `private`, `team`, `org`, or `public` (default: `private`)
+</ParamField>
+
+<ParamField body="orgId" type="string" optional>
+  Organization ID (required for org visibility)
+</ParamField>
+
+<ParamField body="teamId" type="string" optional>
+  Team ID (required for team visibility)
+</ParamField>
+
+<ParamField body="spec" type="string" optional>
+  Full YAML specification (JSON string)
+</ParamField>
+
+<ParamField body="secrets" type="array" optional>
+  Array of secret definitions (values stored in Vault)
+</ParamField>
+
+**Response:** 201 Created
+
+**Example:**
+
+```bash
+curl -X POST "https://your-domain.com/api/templates" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my-api",
+    "displayName": "My API Service",
+    "description": "Custom API service",
+    "category": "web",
+    "image": "myregistry.com/api:latest",
+    "containerPort": 3000,
+    "visibility": "private",
+    "envVars": [
+      {
+        "name": "PORT",
+        "defaultValue": "3000",
+        "description": "HTTP port"
+      }
+    ]
+  }'
+```
+
+**Permissions:**
+- `private` visibility: No special permissions required
+- `team` visibility: Requires `team_admin` role
+- `org` visibility: Requires `org_owner` or `org_admin` role
+- `public` visibility: Requires `platform_admin` role
+
+**Notes:**
+- Template creation triggers automatic sync to Kubernetes ConfigMap
+- Secret values are stripped from spec and stored separately in Vault
+- If sync fails, template creation is rolled back
+
+---
+
+### Update Template
+
+```http
+PUT /api/templates/{name}
+```
+
+Update an existing template. System templates cannot be modified.
+
+**Path Parameters:**
+
+<ParamField path="name" type="string" required>
+  Template name (cannot be changed)
+</ParamField>
+
+**Request Body:**
+
+Same fields as create endpoint (except `name` is ignored).
+
+**Response:** 200 OK
+
+**Example:**
+
+```bash
+curl -X PUT "https://your-domain.com/api/templates/my-api" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "displayName": "My API Service v2",
+    "image": "myregistry.com/api:v2.0.0",
+    "memoryLimit": "1Gi"
+  }'
+```
+
+---
+
+### Delete Template
+
+```http
+DELETE /api/templates/{name}
+```
+
+Delete a template. System templates cannot be deleted. This also removes the template from the ConfigMap.
+
+**Path Parameters:**
+
+<ParamField path="name" type="string" required>
+  Template name
+</ParamField>
+
+**Response:** 204 No Content
+
+**Example:**
+
+```bash
+curl -X DELETE "https://your-domain.com/api/templates/my-api" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+---
+
+## AI Template Generation
+
+### Generate Template with AI
+
+```http
+POST /api/templates/generate
+```
+
+Generate a deployment template using AI (Claude) based on a natural language prompt. The AI uses the user's organization context for personalized results.
+
+**Authentication:** Required (`templates:write` scope)
+
+**Request Body:**
+
+<ParamField body="prompt" type="string" required>
+  Natural language description of the desired template (e.g., "Create a PostgreSQL database with persistent storage")
+</ParamField>
+
+**Response:**
+
+<ResponseField name="name" type="string">
+  Generated template name
+</ResponseField>
+
+<ResponseField name="displayName" type="string">
+  Human-readable name
+</ResponseField>
+
+<ResponseField name="description" type="string">
+  Template description
+</ResponseField>
+
+<ResponseField name="category" type="string">
+  Template category
+</ResponseField>
+
+<ResponseField name="yaml" type="string">
+  Full YAML specification
+</ResponseField>
+
+**Example:**
+
+```bash
+curl -X POST "https://your-domain.com/api/templates/generate" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Create a Redis cache with 2GB memory limit and persistence enabled"
+  }'
+```
+
+```json
+{
+  "name": "redis-cache",
+  "displayName": "Redis Cache",
+  "description": "Redis in-memory cache with persistence",
+  "category": "database",
+  "yaml": "services:\n  - name: redis\n    image: redis:7-alpine\n    containerPort: 6379\n    resources:\n      requests:\n        cpu: 100m\n        memory: 256Mi\n      limits:\n        cpu: 500m\n        memory: 2Gi\n    volumes:\n      - name: data\n        mountPath: /data\n        size: 10Gi"
+}
+```
+
+**Notes:**
+- AI generation can take 15-30 seconds
+- Requires Anthropic API key in server configuration
+- Generated template is automatically saved to the database
+- Uses organization's `aiContext` field for personalized results
+- If template name already exists, it's updated instead of creating a duplicate
+
+**Requirements:**
+
+<Info>
+  AI template generation requires `ANTHROPIC_API_KEY` to be configured on the server. If not configured, this endpoint returns `503 Service Unavailable`.
+</Info>
+
+---
+
+## Template Specification Format
+
+Templates use a YAML-based specification format that defines services, resources, volumes, and secrets:
+
+```yaml
+services:
+  - name: nginx
+    image: nginx:latest
+    containerPort: 80
+    healthCheckPath: /
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    env:
+      - name: PORT
+        value: "80"
+    secrets:
+      - key: API_KEY
+        description: "External API key"
+    volumes:
+      - name: config
+        mountPath: /etc/nginx/conf.d
+        configMap: nginx-config
+```
+
+### Services
+
+Each service defines a container:
+
+<ParamField body="name" type="string" required>
+  Service name (used in DNS)
+</ParamField>
+
+<ParamField body="image" type="string" required>
+  Container image
+</ParamField>
+
+<ParamField body="containerPort" type="integer" required>
+  Port the container listens on
+</ParamField>
+
+<ParamField body="healthCheckPath" type="string" optional>
+  HTTP health check path
+</ParamField>
+
+<ParamField body="resources" type="object" optional>
+  CPU and memory requests/limits
+</ParamField>
+
+<ParamField body="env" type="array" optional>
+  Environment variables
+</ParamField>
+
+<ParamField body="secrets" type="array" optional>
+  Secret references (values in Vault)
+</ParamField>
+
+<ParamField body="volumes" type="array" optional>
+  Volume mounts
+</ParamField>
+
+### Environment Variables
+
+Environment variables can be defined at deployment time:
+
+```json
+{
+  "name": "PORT",
+  "defaultValue": "8080",
+  "description": "HTTP server port",
+  "required": false
+}
+```
+
+### Secrets
+
+Secrets are defined in templates but values are stored in Vault:
+
+```json
+{
+  "key": "DATABASE_PASSWORD",
+  "description": "PostgreSQL password",
+  "serviceName": "postgres"
+}
+```
+
+See [Secrets API](/api/secrets) for managing secret values.
+
+---
+
+## Template Visibility Scopes
+
+Templates support four visibility levels:
+
+### Private
+
+Visible only to the creating user.
+
+```json
+{
+  "visibility": "private"
+}
+```
+
+### Team
+
+Visible to all members of a specific team.
+
+```json
+{
+  "visibility": "team",
+  "teamId": "team_123abc"
+}
+```
+
+### Organization
+
+Visible to all members of an organization.
+
+```json
+{
+  "visibility": "org",
+  "orgId": "org_456def"
+}
+```
+
+### Public
+
+Visible to all users (system templates).
+
+```json
+{
+  "visibility": "public"
+}
+```
+
+---
+
+## Error Responses
+
+<ResponseField name="error" type="string">
+  Human-readable error message
+</ResponseField>
+
+### Common Error Codes
+
+- **400 Bad Request** - Invalid template name or spec format
+- **403 Forbidden** - Insufficient permissions for visibility scope or attempting to modify system template
+- **404 Not Found** - Template not found or not accessible
+- **409 Conflict** - Template name already exists
+- **500 Internal Server Error** - ConfigMap sync failed or database error
+- **503 Service Unavailable** - Template storage not configured or AI generation unavailable

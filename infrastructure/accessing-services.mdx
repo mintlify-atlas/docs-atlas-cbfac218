@@ -1,0 +1,404 @@
+---
+title: Accessing Services
+description: How to access Vault, ArgoCD, EKS, and other deployed services
+---
+
+After deploying all infrastructure layers, you can access your services through Tailscale VPN. This guide covers how to set up access and connect to each service.
+
+## Tailscale VPN Setup
+
+Tailscale provides secure, private access to your infrastructure without exposing services to the public internet.
+
+### Install Tailscale
+
+<CodeGroup>
+```bash macOS
+brew install tailscale
+```
+
+```bash Linux
+curl -fsSL https://tailscale.com/install.sh | sh
+```
+
+```bash Windows
+winget install tailscale.tailscale
+```
+</CodeGroup>
+
+### Connect to Tailscale Network
+
+<Steps>
+  <Step title="Start Tailscale">
+    ```bash
+    sudo tailscale up
+    ```
+    
+    Follow the authentication prompt in your browser.
+  </Step>
+
+  <Step title="Verify connection">
+    ```bash
+    tailscale status
+    ```
+    
+    You should see your devices listed, including the AWS subnet router.
+  </Step>
+
+  <Step title="Test VPC connectivity">
+    ```bash
+    # Ping a private IP in your VPC
+    ping 10.0.1.10
+    ```
+    
+    If this works, you have full access to your private infrastructure.
+  </Step>
+</Steps>
+
+### Creating a Tailscale Auth Key
+
+If you need to create a new auth key for additional subnet routers:
+
+<Steps>
+  <Step title="Open Tailscale Admin Console">
+    Navigate to [https://login.tailscale.com/admin/settings/keys](https://login.tailscale.com/admin/settings/keys)
+  </Step>
+
+  <Step title="Generate new auth key">
+    Click "Generate auth key" and configure:
+    
+    - [x] **Reusable**: Allow key to be used multiple times
+    - [x] **Ephemeral**: Device will be removed when disconnected
+    - [x] **Pre-authorized**: Skip manual approval
+    - **Tags**: `tag:aws-router`
+    - **Expiration**: 90 days (or custom)
+  </Step>
+
+  <Step title="Copy and save the key">
+    Copy the key starting with `tskey-auth-` and store it securely.
+    
+    <Warning>
+      This key will only be shown once. Store it in your password manager or `.env` file.
+    </Warning>
+  </Step>
+</Steps>
+
+## Accessing EKS Cluster
+
+With Tailscale connected, you can access the EKS cluster API directly.
+
+### Configure kubectl
+
+```bash
+aws eks update-kubeconfig --name dev-eks-cluster --region us-east-2
+```
+
+This updates your kubeconfig with the EKS cluster endpoint and authentication details.
+
+### Verify Access
+
+```bash
+# Check connection
+kubectl cluster-info
+
+# List nodes
+kubectl get nodes
+
+# List all pods
+kubectl get pods -A
+```
+
+<Note>
+  The EKS API endpoint is private-only and not accessible without Tailscale connection.
+</Note>
+
+### Common kubectl Commands
+
+```bash
+# Get pods in a namespace
+kubectl get pods -n argocd
+
+# Describe a resource
+kubectl describe pod <pod-name> -n <namespace>
+
+# View logs
+kubectl logs <pod-name> -n <namespace>
+
+# Execute command in pod
+kubectl exec -it <pod-name> -n <namespace> -- /bin/sh
+
+# Port forward to a service
+kubectl port-forward -n <namespace> svc/<service-name> <local-port>:<service-port>
+```
+
+## Accessing Vault
+
+HashiCorp Vault is accessible via web UI and CLI.
+
+### Web UI Access
+
+<Steps>
+  <Step title="Ensure Tailscale is connected">
+    ```bash
+    tailscale status
+    ```
+  </Step>
+
+  <Step title="Navigate to Vault URL">
+    Open your browser and go to:
+    ```
+    https://vault.yourdomain.com
+    ```
+  </Step>
+
+  <Step title="Login with root token">
+    Use the root token generated during Vault initialization:
+    ```bash
+    cat ~/.vault-secrets/vault.env | grep VAULT_TOKEN
+    ```
+    
+    Enter this token in the web UI login form.
+  </Step>
+</Steps>
+
+### CLI Access
+
+```bash
+# Source Vault environment variables
+source ~/.vault-secrets/vault.env
+
+# Verify connection
+vault status
+
+# List secrets
+vault kv list secret/
+
+# Read a secret
+vault kv get secret/path/to/secret
+
+# Write a secret
+vault kv put secret/path/to/secret key=value
+```
+
+### Port Forward Method
+
+Alternatively, access Vault via kubectl port forwarding:
+
+```bash
+# Port forward to Vault service
+kubectl port-forward -n vault svc/vault 8200:8200
+
+# In another terminal
+export VAULT_ADDR="http://localhost:8200"
+vault status
+```
+
+## Accessing ArgoCD
+
+ArgoCD provides a web UI for managing GitOps deployments.
+
+### Web UI Access
+
+<Steps>
+  <Step title="Get admin password">
+    ```bash
+    kubectl -n argocd get secret argocd-initial-admin-secret \
+      -o jsonpath="{.data.password}" | base64 -d && echo
+    ```
+    
+    Save this password for login.
+  </Step>
+
+  <Step title="Navigate to ArgoCD URL">
+    With Tailscale connected:
+    ```
+    https://argocd.yourdomain.com
+    ```
+  </Step>
+
+  <Step title="Login">
+    - **Username**: `admin`
+    - **Password**: (from step 1)
+  </Step>
+
+  <Step title="Change default password (recommended)">
+    1. Click "User Info" in top right
+    2. Select "Update Password"
+    3. Enter current and new password
+  </Step>
+</Steps>
+
+### CLI Access
+
+Install ArgoCD CLI:
+
+<CodeGroup>
+```bash macOS
+brew install argocd
+```
+
+```bash Linux
+curl -sSL -o argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+sudo install -m 555 argocd /usr/local/bin/argocd
+rm argocd
+```
+</CodeGroup>
+
+Login via CLI:
+
+```bash
+# Login to ArgoCD
+argocd login argocd.yourdomain.com
+
+# List applications
+argocd app list
+
+# Get application details
+argocd app get <app-name>
+
+# Sync an application
+argocd app sync <app-name>
+```
+
+### Port Forward Method
+
+```bash
+# Port forward to ArgoCD server
+kubectl port-forward -n argocd svc/argocd-server 8080:443
+
+# Access in browser
+https://localhost:8080
+```
+
+## Accessing Traefik Dashboard
+
+Traefik provides a dashboard for monitoring routes and services.
+
+### Port Forward Access
+
+```bash
+# Port forward to Traefik dashboard
+kubectl port-forward -n traefik svc/traefik 9000:9000
+```
+
+Then navigate to: `http://localhost:9000/dashboard/`
+
+<Note>
+  Note the trailing slash in the URL - it's required.
+</Note>
+
+## Service URLs Reference
+
+Once connected to Tailscale, access services at these URLs:
+
+| Service | URL | Authentication |
+|---------|-----|----------------|
+| Vault | `https://vault.yourdomain.com` | Root token |
+| ArgoCD | `https://argocd.yourdomain.com` | admin / (generated password) |
+| Traefik Dashboard | Port forward to `localhost:9000` | None |
+| EKS API | Via kubectl | AWS IAM |
+
+## Troubleshooting Access
+
+### Cannot Connect to Services
+
+<AccordionGroup>
+  <Accordion title="Tailscale not connected">
+    Check Tailscale status:
+    ```bash
+    tailscale status
+    ```
+    
+    If not connected, run:
+    ```bash
+    sudo tailscale up
+    ```
+  </Accordion>
+
+  <Accordion title="Subnet routes not approved">
+    1. Go to [Tailscale Admin Console](https://login.tailscale.com/admin/machines)
+    2. Find your subnet router
+    3. Check that routes are advertised and approved
+    4. If not approved, check your ACL configuration includes auto-approvers
+  </Accordion>
+
+  <Accordion title="DNS not resolving">
+    If `vault.yourdomain.com` doesn't resolve:
+    
+    1. Check Cloudflare DNS records
+    2. Verify external-dns is running:
+       ```bash
+       kubectl get pods -n external-dns
+       ```
+    3. Check external-dns logs:
+       ```bash
+       kubectl logs -n external-dns deployment/external-dns
+       ```
+  </Accordion>
+
+  <Accordion title="Certificate errors">
+    If you see SSL/TLS certificate errors:
+    
+    1. Check certificate status:
+       ```bash
+       kubectl get certificates -A
+       ```
+    2. Verify cert-manager is running:
+       ```bash
+       kubectl get pods -n cert-manager
+       ```
+    3. Check certificate details:
+       ```bash
+       kubectl describe certificate <cert-name> -n <namespace>
+       ```
+  </Accordion>
+</AccordionGroup>
+
+### kubectl Connection Issues
+
+```bash
+# Update kubeconfig
+aws eks update-kubeconfig --name dev-eks-cluster --region us-east-2
+
+# Verify AWS credentials
+aws sts get-caller-identity
+
+# Test cluster connectivity
+kubectl cluster-info
+```
+
+### Vault Unsealed Status
+
+If Vault is sealed:
+
+```bash
+# Check Vault status
+kubectl exec -n vault vault-0 -- vault status
+
+# If sealed, Vault should auto-unseal with KMS
+# Check pod logs if issues persist
+kubectl logs -n vault vault-0
+```
+
+## Security Best Practices
+
+<Warning>
+  **Important security considerations:**
+  
+  - Store Vault root token in a secure password manager
+  - Rotate Vault root token after initial setup
+  - Change ArgoCD admin password immediately
+  - Never share Tailscale auth keys publicly
+  - Use short-lived tokens for CI/CD
+  - Enable MFA on Tailscale account
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Troubleshooting" icon="wrench" href="/infrastructure/troubleshooting">
+    Common issues and solutions
+  </Card>
+  <Card title="Destroying Resources" icon="trash" href="/infrastructure/destroying">
+    How to safely tear down infrastructure
+  </Card>
+</CardGroup>

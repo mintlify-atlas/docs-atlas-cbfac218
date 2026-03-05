@@ -1,0 +1,157 @@
+---
+title: Bootstrap
+description: Initialize Terraform state backend with S3 and DynamoDB
+---
+
+The bootstrap step creates the remote state backend for Terraform. This is a one-time operation that provisions an S3 bucket for state storage and a DynamoDB table for state locking.
+
+<Warning>
+  The bootstrap step must be completed before deploying any other infrastructure layers.
+</Warning>
+
+## What Gets Created
+
+The bootstrap process provisions:
+
+- **S3 Bucket**: Stores Terraform state files for all layers
+- **DynamoDB Table**: Provides state locking to prevent concurrent modifications
+- **Backend Configuration**: Updates all layer backend configs to use the remote state
+
+## Bootstrap Steps
+
+<Steps>
+  <Step title="Navigate to bootstrap directory">
+    ```bash
+    cd terraform/dev/bootstrap
+    ```
+  </Step>
+
+  <Step title="Initialize Terraform">
+    ```bash
+    terraform init
+    ```
+    
+    This initializes Terraform with the local backend (state will be stored locally for this step only).
+  </Step>
+
+  <Step title="Review the plan">
+    ```bash
+    terraform plan
+    ```
+    
+    Review the resources that will be created:
+    - S3 bucket with versioning and encryption enabled
+    - DynamoDB table with primary key for state locking
+  </Step>
+
+  <Step title="Apply the configuration">
+    ```bash
+    terraform apply
+    ```
+    
+    Type `yes` when prompted to confirm the creation of resources.
+  </Step>
+
+  <Step title="Run post-bootstrap script">
+    ```bash
+    ./post-bootstrap.sh
+    ```
+    
+    This script updates the `backend.tf` files in all infrastructure layers to use the newly created S3 bucket and DynamoDB table.
+  </Step>
+</Steps>
+
+## Post-Bootstrap Configuration
+
+The `post-bootstrap.sh` script automatically updates the backend configuration for all three infrastructure layers:
+
+- `1-infrastructure/backend.tf`
+- `2-platform/backend.tf`
+- `3-apps/backend.tf`
+
+Each backend configuration points to the same S3 bucket but uses a different state file key:
+
+```hcl
+terraform {
+  backend "s3" {
+    bucket         = "shipyard-terraform-state-dev"
+    key            = "1-infrastructure/terraform.tfstate"
+    region         = "us-east-2"
+    dynamodb_table = "shipyard-terraform-locks-dev"
+    encrypt        = true
+  }
+}
+```
+
+## State Management
+
+### State Files
+
+Each layer maintains its own state file:
+
+- `1-infrastructure/terraform.tfstate`: VPC, EKS, Tailscale, Vault infrastructure
+- `2-platform/terraform.tfstate`: Kubernetes platform components
+- `3-apps/terraform.tfstate`: Applications and services
+
+### State Locking
+
+DynamoDB provides state locking to prevent multiple users or processes from modifying state simultaneously. When you run `terraform apply`, Terraform automatically:
+
+1. Acquires a lock in DynamoDB
+2. Performs the operation
+3. Releases the lock
+
+<Info>
+  If a lock is held by another process, Terraform will wait until the lock is released or timeout after 10 minutes.
+</Info>
+
+## Verification
+
+Verify the bootstrap resources were created:
+
+<Tabs>
+  <Tab title="AWS Console">
+    1. Navigate to S3 in the AWS Console
+    2. Find the bucket named `shipyard-terraform-state-dev`
+    3. Verify versioning and encryption are enabled
+    
+    4. Navigate to DynamoDB
+    5. Find the table named `shipyard-terraform-locks-dev`
+  </Tab>
+  
+  <Tab title="AWS CLI">
+    ```bash
+    # Verify S3 bucket
+    aws s3 ls | grep shipyard-terraform-state
+    
+    # Verify DynamoDB table
+    aws dynamodb list-tables | grep shipyard-terraform-locks
+    ```
+  </Tab>
+</Tabs>
+
+## Troubleshooting
+
+### Bucket Already Exists
+
+If you see an error that the S3 bucket already exists:
+
+1. Check if the bucket was created in a previous run
+2. If so, skip to running `post-bootstrap.sh`
+3. If the bucket is in a different account, choose a different bucket name in `bootstrap/main.tf`
+
+### Permission Denied
+
+If you encounter permission errors:
+
+1. Verify your AWS credentials have permissions to create S3 buckets and DynamoDB tables
+2. Ensure your IAM user/role has `AdministratorAccess` or equivalent permissions
+3. Check that your AWS credentials are correctly configured: `aws sts get-caller-identity`
+
+## Next Steps
+
+With the bootstrap complete, you're ready to deploy the infrastructure layer.
+
+<Card title="Infrastructure Layer" icon="network-wired" href="/infrastructure/infrastructure-layer">
+  Deploy VPC, EKS cluster, and core infrastructure
+</Card>

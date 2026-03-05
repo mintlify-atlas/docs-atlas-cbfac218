@@ -1,0 +1,315 @@
+---
+title: Platform Layer
+description: Deploy Kubernetes platform components including Vault, cert-manager, and load balancer controller
+---
+
+The platform layer deploys essential Kubernetes infrastructure components that applications will depend on. This includes certificate management, secrets synchronization, load balancing, and HashiCorp Vault.
+
+## What Gets Deployed
+
+This layer installs:
+
+- **AWS Load Balancer Controller**: Manages Application Load Balancers for Kubernetes ingress
+- **Cert Manager**: Automated TLS certificate provisioning and renewal
+- **External Secrets Operator**: Syncs secrets from Vault to Kubernetes
+- **Vault**: HashiCorp Vault deployed via Helm for secrets management
+
+## Environment Variables
+
+No additional environment variables are required for deployment. However, after deployment, you'll need to configure Vault credentials.
+
+## Deployment Steps
+
+<Steps>
+  <Step title="Navigate to platform directory">
+    ```bash
+    cd terraform/dev/2-platform
+    ```
+  </Step>
+
+  <Step title="Initialize Terraform">
+    ```bash
+    terraform init
+    ```
+    
+    This initializes the remote backend and downloads provider plugins.
+  </Step>
+
+  <Step title="Review the plan">
+    ```bash
+    terraform plan
+    ```
+    
+    Review the resources that will be created:
+    - IAM roles and policies for AWS Load Balancer Controller
+    - Helm releases for cert-manager, external-secrets, and Vault
+    - Kubernetes service accounts and RBAC configurations
+  </Step>
+
+  <Step title="Apply the configuration">
+    ```bash
+    terraform apply
+    ```
+    
+    Type `yes` when prompted. This process takes approximately 5-10 minutes.
+  </Step>
+</Steps>
+
+## Vault Initialization
+
+After the platform layer is deployed, you must initialize and unseal Vault.
+
+<Warning>
+  Vault initialization is a critical one-time operation. The root token and recovery keys must be stored securely.
+</Warning>
+
+### Wait for Vault Pods
+
+First, ensure Vault pods are running:
+
+```bash
+kubectl get pods -n vault -w
+```
+
+Wait until you see pods in `Running` state (they may show `0/1` ready, which is expected before initialization).
+
+### Run Bootstrap Script
+
+<Steps>
+  <Step title="Navigate to scripts directory">
+    ```bash
+    cd scripts
+    ```
+  </Step>
+
+  <Step title="Execute bootstrap script">
+    ```bash
+    ./vault-bootstrap.sh
+    ```
+    
+    This script:
+    - Initializes Vault with auto-unseal using AWS KMS
+    - Generates recovery keys and root token
+    - Saves credentials to `~/.vault-secrets/vault.env`
+    - Configures Vault for Kubernetes authentication
+  </Step>
+
+  <Step title="Save credentials securely">
+    The script outputs:
+    - **Root Token**: Required for admin operations
+    - **Recovery Keys**: Needed for disaster recovery
+    
+    <Warning>
+      Store these credentials in a secure password manager immediately. Loss of these credentials may result in permanent data loss.
+    </Warning>
+  </Step>
+
+  <Step title="Source Vault environment">
+    ```bash
+    source ~/.vault-secrets/vault.env
+    ```
+    
+    This sets:
+    - `VAULT_ADDR`: Vault server URL
+    - `VAULT_TOKEN`: Root token for authentication
+  </Step>
+</Steps>
+
+### Verify Vault Status
+
+```bash
+# Check Vault status
+kubectl exec -n vault vault-0 -- vault status
+
+# Should show:
+# Sealed: false
+# Initialized: true
+```
+
+## Platform Components
+
+### AWS Load Balancer Controller
+
+The AWS Load Balancer Controller provisions Application Load Balancers when you create Kubernetes Ingress resources.
+
+**Features:**
+- Automatic ALB creation from Ingress manifests
+- Target group management
+- SSL/TLS termination
+- Path-based and host-based routing
+
+**Configuration:**
+- Deployed in `kube-system` namespace
+- Uses IAM Roles for Service Accounts (IRSA)
+- Monitors Ingress resources with `alb.ingress.kubernetes.io` annotations
+
+### Cert Manager
+
+Cert Manager automates TLS certificate issuance and renewal from Let's Encrypt.
+
+**Features:**
+- Automated certificate provisioning
+- Automatic renewal before expiration
+- ACME DNS-01 challenge support via Cloudflare
+
+**Configuration:**
+- Deployed in `cert-manager` namespace
+- ClusterIssuers for Let's Encrypt staging and production
+- Cloudflare DNS integration for wildcard certificates
+
+### External Secrets Operator
+
+External Secrets Operator syncs secrets from Vault to Kubernetes Secrets.
+
+**Features:**
+- Automatic secret synchronization
+- Refresh on secret changes
+- Multiple secret backend support
+
+**Configuration:**
+- Deployed in `external-secrets` namespace
+- SecretStore resources configured for Vault
+- Kubernetes auth method for Vault authentication
+
+### Vault
+
+HashiCorp Vault provides centralized secrets management.
+
+**Features:**
+- KV secrets engine for key-value storage
+- Dynamic secrets generation
+- Encryption as a service
+- Audit logging
+
+**Configuration:**
+- Deployed in `vault` namespace via Helm
+- High availability with DynamoDB backend
+- Auto-unseal using AWS KMS
+- Ingress for HTTPS access via Tailscale
+
+## Accessing Vault
+
+### Via kubectl Port Forward
+
+For local access without ingress:
+
+```bash
+kubectl port-forward -n vault svc/vault 8200:8200
+```
+
+Then access at `http://localhost:8200`.
+
+### Via Tailscale (Recommended)
+
+Once connected to Tailscale, access Vault directly:
+
+```bash
+export VAULT_ADDR="https://vault.yourdomain.com"
+vault status
+```
+
+## Verification
+
+### Check All Pods
+
+```bash
+# AWS Load Balancer Controller
+kubectl get pods -n kube-system | grep aws-load-balancer
+
+# Cert Manager
+kubectl get pods -n cert-manager
+
+# External Secrets
+kubectl get pods -n external-secrets
+
+# Vault
+kubectl get pods -n vault
+```
+
+All pods should be in `Running` state.
+
+### Verify Cert Manager Issuers
+
+```bash
+kubectl get clusterissuers
+```
+
+You should see:
+- `letsencrypt-staging`
+- `letsencrypt-prod`
+
+### Test Vault Access
+
+```bash
+# Port forward to Vault
+kubectl port-forward -n vault svc/vault 8200:8200 &
+
+# Set Vault address
+export VAULT_ADDR="http://localhost:8200"
+
+# Check status
+vault status
+
+# List secrets engines
+vault secrets list
+```
+
+## Outputs
+
+The platform layer exports the following outputs:
+
+| Output | Description |
+|--------|-------------|
+| `vault_addr` | Vault server URL |
+| `vault_namespace` | Kubernetes namespace where Vault is deployed |
+| `cert_manager_ready` | Boolean indicating cert-manager is deployed |
+
+## Troubleshooting
+
+### Vault Pods Not Starting
+
+Check pod events:
+
+```bash
+kubectl describe pod -n vault vault-0
+```
+
+Common issues:
+- KMS key permissions not granted to node role
+- DynamoDB table not accessible
+- Insufficient resources on nodes
+
+### AWS Load Balancer Controller Errors
+
+Check controller logs:
+
+```bash
+kubectl logs -n kube-system deployment/aws-load-balancer-controller
+```
+
+Common issues:
+- IAM permissions insufficient
+- Subnets not properly tagged for auto-discovery
+- Security group rules blocking traffic
+
+### Cert Manager Certificate Issues
+
+Check certificate status:
+
+```bash
+kubectl get certificates -A
+kubectl describe certificate <cert-name> -n <namespace>
+```
+
+Common issues:
+- Cloudflare API token permissions insufficient
+- DNS propagation delays
+- Rate limiting from Let's Encrypt
+
+## Next Steps
+
+With the platform layer deployed and Vault initialized, you're ready to deploy applications.
+
+<Card title="Apps Layer" icon="rocket" href="/infrastructure/apps-layer">
+  Deploy ArgoCD, Traefik, and application services
+</Card>

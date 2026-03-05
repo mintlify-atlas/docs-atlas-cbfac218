@@ -1,0 +1,260 @@
+---
+title: "K8s Scheduler Overview"
+description: "Multi-tenant Kubernetes deployment platform with React frontend, OAuth authentication, RBAC, and tiered subscriptions"
+---
+
+## What is K8s Scheduler?
+
+K8s Scheduler is a **Kubernetes-native multi-tenant deployment platform** that enables teams to deploy and manage containerized applications with built-in authentication, role-based access control, and subscription billing.
+
+Think of it as a self-hosted platform that lets you offer Kubernetes deployments to multiple organizations, teams, and users — each with their own isolated environments, permissions, and billing tiers.
+
+<Note>
+K8s Scheduler is designed for platform teams who want to build a white-label deployment platform on top of Kubernetes, similar to Heroku or Railway, but with full control over the infrastructure.
+</Note>
+
+## Key Capabilities
+
+### Multi-Tenancy Model
+
+K8s Scheduler implements a three-tier hierarchy:
+
+```
+Platform
+├── Clients (white-label instances with custom domains)
+│   ├── Organizations
+│   │   ├── Teams
+│   │   │   └── Members (with roles: team_admin, developer, viewer)
+│   │   └── Deployments
+│   └── Billing Plans
+└── Direct Organizations (no client wrapper)
+```
+
+Each level has its own permissions and resource isolation:
+
+| Level | Roles | Key Features |
+|-------|-------|-------------|
+| **Organization** | `org_owner`, `org_admin`, `org_member` | Full org control, billing management, team creation |
+| **Team** | `team_admin`, `developer`, `viewer` | Deployment management, member invites, secrets |
+| **Deployment** | Inherited from team | Resource limits based on subscription tier |
+
+### Role-Based Access Control (RBAC)
+
+Granular permissions at every level:
+
+- **Organization owners** can manage billing, create teams, and control all resources
+- **Team admins** can invite members, create deployments, and manage team secrets
+- **Developers** can create and manage deployments, view secrets
+- **Viewers** have read-only access to team deployments
+
+### OAuth Authentication
+
+Built-in Google OAuth2 support with session management:
+
+- **Session backends**: In-memory, PostgreSQL, or Redis
+- **Dev mode**: Auto-login for local development (no OAuth required)
+- **White-label support**: Custom domains per client with isolated sessions
+
+### Subscription Tiers
+
+Enforce resource limits based on subscription level:
+
+| Feature | Free | Business | Enterprise |
+|---------|------|----------|------------|
+| Deployments | 1 | 5 | Unlimited |
+| Team Members | 1 | 10 | Unlimited |
+| Templates | System only | + Custom | + Org-wide |
+| Network Isolation | Shared | Namespace | Dedicated |
+| Support | Community | Email | Dedicated |
+
+<Info>
+Tier limits are enforced at the API level and validated during deployment creation. The operator also applies resource quotas and network policies based on the tier.
+</Info>
+
+### Template System
+
+Define reusable multi-service deployment bundles:
+
+- **Visibility scopes**: `private`, `team`, `org`, or system-wide
+- **Multi-service**: Define frontend, backend, database, cache in a single template
+- **Resource limits**: CPU and memory requests/limits per service
+- **Environment variables**: Required and optional config with secret support
+- **ConfigMaps**: Custom configuration files mounted in containers
+
+### Three-Tier Secrets Architecture
+
+Secrets are organized hierarchically and merged at runtime:
+
+```
+1. Organization Secrets (highest priority)
+   └─> Shared across ALL deployments in the org
+
+2. Deployment Secrets
+   └─> Injected into ALL services in a deployment
+
+3. Service Secrets (most specific)
+   └─> Injected only into specific containers
+```
+
+Secrets are stored in **HashiCorp Vault** or **AWS Secrets Manager** and synced into Kubernetes Secrets via the **External Secrets Operator**.
+
+## Tech Stack
+
+### Backend
+
+- **Language**: Go 1.24
+- **Framework**: `net/http` (stdlib) for REST API
+- **Database**: PostgreSQL with `pgx/v5`
+- **Secrets**: HashiCorp Vault or AWS Secrets Manager
+- **Kubernetes**: `controller-runtime` and `client-go`
+- **Auth**: Google OAuth2
+- **Billing**: Stripe integration (optional)
+- **Email**: SendGrid or SMTP (optional)
+- **Logging**: `log/slog` for structured logging
+
+### Frontend
+
+- **Framework**: React 19 with TypeScript
+- **Build Tool**: Vite 7
+- **Styling**: Tailwind CSS 4
+- **State Management**: TanStack Query 5 for server state
+- **Routing**: React Router 7
+- **Forms**: React Hook Form + Zod validation
+- **Charts**: Recharts for metrics visualization
+
+<Note>
+The React frontend is embedded in the Go binary via `go:embed`, so you get a single deployable artifact.
+</Note>
+
+### Infrastructure
+
+- **Container Runtime**: Docker
+- **Orchestration**: Kubernetes
+- **Ingress**: Traefik + AWS ALB Controller
+- **DNS**: Cloudflare + External DNS
+- **TLS**: cert-manager with Cloudflare DNS01 challenges
+- **Secrets**: HashiCorp Vault + External Secrets Operator
+- **CI/CD**: GitHub Actions
+
+## Architecture Overview
+
+K8s Scheduler consists of three main components:
+
+### 1. React SPA (`ui/`)
+
+The user-facing web application:
+
+- **Dashboard** with deployment cards and status
+- **Team management** (create teams, invite members, manage roles)
+- **Secrets management** (three-tier secrets UI)
+- **Template creation** with YAML editor
+- **Real-time logs** and metrics streaming
+- **Billing and invoices** (Stripe integration)
+
+The SPA is built with Vite and embedded in the Go binary via `go:embed`.
+
+### 2. Go Server (`cmd/server`)
+
+REST API backend that handles:
+
+- **OAuth authentication** (Google OAuth2 flow)
+- **Session management** (memory/PostgreSQL/Redis backends)
+- **RBAC middleware** (permission checks on all endpoints)
+- **Template CRUD** with visibility scopes
+- **Deployment lifecycle** (create UserDeployment CRs)
+- **Secrets management** (three-tier Vault integration)
+- **Billing webhooks** (Stripe events)
+- **Embedded SPA serving**
+
+Key endpoints: `/api/deployments`, `/api/teams`, `/api/secrets`, `/api/templates`
+
+### 3. Operator (`cmd/operator`)
+
+Kubernetes operator using controller-runtime:
+
+- **Watches** `UserDeployment` custom resources
+- **Reconciles** K8s resources (Deployments, Services, Ingresses)
+- **Manages** ExternalSecrets, ConfigMaps, NetworkPolicies
+- **Monitors** health probes and exports Prometheus metrics
+- **Enforces** tier-based resource limits and network isolation
+
+The operator translates high-level UserDeployment specs into native Kubernetes resources.
+
+## Data Flow
+
+Here's how a deployment is created:
+
+<Steps>
+  <Step title="User creates deployment via React UI">
+    Selects a template, fills in environment variables, clicks "Deploy"
+  </Step>
+  <Step title="API request to Go server">
+    `POST /api/deployments` with template name and config
+  </Step>
+  <Step title="Server validates and authorizes">
+    - Checks user has `deploy:create` permission on the team
+    - Validates tier limits (max deployments, max team members)
+    - Validates template visibility (can user access this template?)
+  </Step>
+  <Step title="Server creates UserDeployment CR">
+    Writes a `UserDeployment` custom resource to Kubernetes
+  </Step>
+  <Step title="Operator watches and reconciles">
+    - Fetches the template spec from a ConfigMap
+    - Creates Deployment, Service, Ingress per service
+    - Creates ExternalSecrets to sync from Vault
+    - Creates ConfigMaps for user-provided config
+    - Applies NetworkPolicies based on tier
+  </Step>
+  <Step title="Kubernetes resources come online">
+    - Pods start running
+    - External Secrets syncs secrets from Vault into K8s Secrets
+    - Ingress gets a DNS record via External DNS
+    - cert-manager provisions TLS certificate
+  </Step>
+  <Step title="Deployment is accessible">
+    User can access their app at `https://<deployment-name>.<domain>`
+  </Step>
+</Steps>
+
+## Why K8s Scheduler?
+
+### Use Cases
+
+1. **Internal Developer Platform**: Let your engineering teams self-serve deployments without learning Kubernetes
+2. **White-label SaaS**: Offer deployment capabilities to external customers with custom branding
+3. **Multi-tenant hosting**: Manage multiple organizations with isolated resources and billing
+4. **Sandbox environments**: Quickly spin up dev/staging environments with resource limits
+
+### What Makes It Different?
+
+- **Opinionated infrastructure**: Not a generic PaaS — designed for a specific stack (ALB, Traefik, Vault, cert-manager)
+- **Multi-tenant by default**: Organizations, teams, and RBAC built-in from day one
+- **Template-based**: Deploy complex multi-service stacks with a single click
+- **Secrets hierarchy**: Org-wide, deployment-wide, and service-specific secrets
+- **Subscription tiers**: Enforce resource limits and features based on billing tier
+- **White-label ready**: Custom domains, branding, and billing per client
+
+<Warning>
+K8s Scheduler is **not** a drop-in replacement for Heroku or Railway. It requires running your own Kubernetes cluster and managing the platform dependencies (PostgreSQL, Vault, Traefik, etc.).
+</Warning>
+
+## Lines of Code
+
+| Language | Lines | Description |
+|----------|-------|-------------|
+| Go | ~34,000 | Backend server, operator, business logic |
+| TypeScript/TSX | ~9,000 | React frontend, components, hooks |
+| YAML | ~1,400 | Kubernetes manifests, CRDs |
+| **Total** | **~45,000** | |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/k8s-scheduler/quickstart">
+    Get k8s-scheduler running locally in 2 minutes
+  </Card>
+  <Card title="Local Development" icon="laptop-code" href="/k8s-scheduler/local-development">
+    Set up a local dev environment with kind
+  </Card>
+</CardGroup>

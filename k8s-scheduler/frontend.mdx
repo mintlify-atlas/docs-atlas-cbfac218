@@ -1,0 +1,520 @@
+---
+title: 'Frontend Architecture'
+description: 'React 19 frontend with TypeScript, Vite, and TanStack Query'
+icon: 'react'
+---
+
+## Overview
+
+The K8s Scheduler frontend is a modern React 19 single-page application built with TypeScript, Vite, and TanStack Query. It provides a responsive UI for managing deployments, sandboxes, secrets, teams, and billing.
+
+## Tech Stack
+
+<CardGroup cols={2}>
+  <Card title="React 19" icon="react">
+    Latest React with concurrent features
+  </Card>
+  <Card title="TypeScript" icon="code">
+    Type-safe development experience
+  </Card>
+  <Card title="Vite" icon="bolt">
+    Fast build tool and dev server
+  </Card>
+  <Card title="TanStack Query" icon="database">
+    Powerful data fetching and caching
+  </Card>
+</CardGroup>
+
+## Project Structure
+
+```bash
+ui/
+├── src/
+│   ├── api/              # API client and hooks
+│   │   ├── client.ts     # Fetch wrapper with error handling
+│   │   ├── hooks/        # TanStack Query hooks
+│   │   └── types/        # TypeScript types
+│   ├── components/       # React components
+│   │   ├── admin/        # Admin dashboard components
+│   │   ├── auth/         # Authentication components
+│   │   ├── billing/      # Billing and subscription UI
+│   │   ├── common/       # Shared UI components
+│   │   ├── deployments/  # Deployment management
+│   │   ├── layout/       # Layout and navigation
+│   │   ├── sandboxes/    # Sandbox management
+│   │   ├── secrets/      # Secret management
+│   │   ├── team/         # Team collaboration
+│   │   └── theme/        # Theme provider
+│   ├── pages/            # Page components
+│   ├── routes/           # React Router configuration
+│   ├── config/           # App configuration
+│   └── main.tsx          # Application entry point
+├── public/               # Static assets
+├── package.json          # Dependencies
+├── vite.config.ts        # Vite configuration
+└── tsconfig.json         # TypeScript configuration
+```
+
+Source: `ui/src/` directory structure
+
+## API Client
+
+The frontend uses a custom API client built on the Fetch API with automatic error handling and session management.
+
+### Client Implementation
+
+```typescript title="ui/src/api/client.ts"
+const API_BASE = '';
+
+export class ApiError extends Error {
+  status: number;
+  statusText: string;
+
+  constructor(status: number, statusText: string, message?: string) {
+    super(message || `${status} ${statusText}`);
+    this.name = 'ApiError';
+    this.status = status;
+    this.statusText = statusText;
+  }
+}
+
+async function handleResponse<T>(response: Response): Promise<T> {
+  if (!response.ok) {
+    if (response.status === 401) {
+      throw new ApiError(401, 'Unauthorized', 'Session expired');
+    }
+
+    let errorMessage: string | undefined;
+    try {
+      const body = await response.json();
+      errorMessage = body.error || body.message;
+    } catch {
+      // Ignore JSON parse errors
+    }
+
+    throw new ApiError(response.status, response.statusText, errorMessage);
+  }
+
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
+  return response.json();
+}
+
+export const api = {
+  async get<T>(path: string): Promise<T> {
+    const response = await fetch(`${API_BASE}${path}`, {
+      method: 'GET',
+      credentials: 'include',
+      headers: { 'Accept': 'application/json' },
+    });
+    return handleResponse<T>(response);
+  },
+
+  async post<T>(path: string, body?: unknown): Promise<T> {
+    const response = await fetch(`${API_BASE}${path}`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    return handleResponse<T>(response);
+  },
+  
+  // ... put, patch, delete methods
+};
+```
+
+Source: `ui/src/api/client.ts:1-104`
+
+### Key Features
+
+- **Credential handling**: Automatic cookie-based session management
+- **Error handling**: Structured error responses with `ApiError` class
+- **401 handling**: Throws errors for React Router to handle redirects
+- **204 handling**: Returns `undefined` for No Content responses
+- **Type safety**: Full TypeScript generics support
+
+## TanStack Query Hooks
+
+The application uses TanStack Query (React Query v5) for data fetching, caching, and state management.
+
+### Available Hooks
+
+```bash
+ui/src/api/hooks/
+├── useAuth.ts              # User authentication
+├── useDeployments.ts       # Deployment CRUD operations
+├── useSandboxes.ts         # Sandbox management
+├── useSecrets.ts           # Secret management
+├── useTeams.ts             # Team collaboration
+├── useBilling.ts           # Subscription and billing
+├── useTemplates.ts         # Template management
+├── useClients.ts           # Client admin (white-label)
+├── useAPIKeys.ts           # API key management
+├── useConfig.ts            # Public configuration
+└── useDeploymentMetrics.ts # Pod metrics
+```
+
+Source: `ui/src/api/hooks/` directory
+
+### Example Hook Usage
+
+```typescript
+import { useDeployments } from '@/api/hooks';
+
+function DeploymentsList() {
+  const { data: deployments, isLoading, error } = useDeployments();
+
+  if (isLoading) return <Spinner />;
+  if (error) return <ErrorMessage error={error} />;
+
+  return (
+    <div>
+      {deployments.map(dep => (
+        <DeploymentCard key={dep.name} deployment={dep} />
+      ))}
+    </div>
+  );
+}
+```
+
+## Application Structure
+
+### Entry Point
+
+```typescript title="ui/src/main.tsx"
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import App from './App.tsx'
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
+```
+
+Source: `ui/src/main.tsx:1-11`
+
+### App Component
+
+```typescript title="ui/src/App.tsx"
+import { QueryClientProvider } from '@tanstack/react-query';
+import { Toaster } from 'sonner';
+import { queryClient } from '@/config/queryClient';
+import { AuthProvider } from '@/components/auth';
+import { ThemeProvider } from '@/components/theme';
+import { AppRouter } from '@/routes';
+
+function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider>
+        <AuthProvider>
+          <AppRouter />
+        </AuthProvider>
+        <Toaster position="top-right" richColors duration={3000} />
+      </ThemeProvider>
+    </QueryClientProvider>
+  );
+}
+```
+
+Source: `ui/src/App.tsx:1-22`
+
+## Routing
+
+The application uses React Router v7 with nested routes and protected routes.
+
+### Route Configuration
+
+```typescript title="ui/src/routes/index.tsx"
+import { createBrowserRouter, RouterProvider } from 'react-router-dom';
+import { AppShell } from '@/components/layout';
+import { ProtectedRoute } from '@/components/auth';
+
+const router = createBrowserRouter([
+  {
+    path: '/signin',
+    element: <Login />,
+  },
+  {
+    path: '/tier/select',
+    element: <TierSelection />,
+  },
+  {
+    path: '/invite',
+    element: <AcceptInvite />,
+  },
+  {
+    path: '/',
+    element: (
+      <ProtectedRoute>
+        <AppShell />
+      </ProtectedRoute>
+    ),
+    children: [
+      { index: true, element: <Dashboard /> },
+      { path: 'secrets', element: <Secrets /> },
+      { path: 'billing', element: <Billing /> },
+      { path: 'teams', element: <Teams /> },
+      { path: 'teams/:teamId', element: <TeamSettings /> },
+      { path: 'settings/team', element: <TeamSettings /> },
+      { path: 'settings/org', element: <OrgSettings /> },
+      { path: 'admin/templates', element: <TemplatesAdmin /> },
+      { path: 'admin/clients', element: <ClientsAdmin /> },
+      { path: 'admin/platform', element: <PlatformAdmin /> },
+      { path: 'settings', element: <Settings /> },
+      { path: 'deploy-image', element: <DeployImage /> },
+      { path: 'deployments/:name', element: <DeploymentDetails /> },
+      { path: 'sandboxes', element: <Sandboxes /> },
+      { path: 'sandboxes/:id', element: <SandboxDetails /> },
+    ],
+  },
+]);
+```
+
+Source: `ui/src/routes/index.tsx:24-106`
+
+### Protected Routes
+
+All authenticated routes are wrapped in `<ProtectedRoute>` which:
+
+1. Checks for valid session
+2. Redirects to `/signin` if unauthorized
+3. Handles 401 errors from API
+
+## Component Organization
+
+### Layout Components
+
+- **AppShell**: Main layout with navigation, sidebar, and content area
+- **ProtectedRoute**: Authentication guard
+- **Navigation**: Top navigation bar with user menu
+- **Sidebar**: Left sidebar with feature navigation
+
+### Feature Components
+
+```bash
+components/
+├── admin/           # Platform admin UI
+│   ├── TemplateManager.tsx
+│   ├── ClientManager.tsx
+│   └── UserManager.tsx
+├── deployments/     # Deployment cards, status, logs
+│   ├── DeploymentCard.tsx
+│   ├── DeploymentStatus.tsx
+│   └── DeploymentLogs.tsx
+├── sandboxes/       # Interactive sandbox UI
+│   ├── SandboxCard.tsx
+│   └── SandboxTerminal.tsx
+├── secrets/         # Secret management forms
+│   ├── SecretForm.tsx
+│   └── SecretList.tsx
+├── team/            # Team collaboration
+│   ├── TeamMembers.tsx
+│   └── InviteForm.tsx
+└── billing/         # Subscription management
+    ├── PlanSelector.tsx
+    └── UsageMetrics.tsx
+```
+
+Source: `ui/src/components/` directory structure
+
+## Pages
+
+### Available Pages
+
+```typescript
+pages/
+├── Dashboard.tsx          # Main dashboard with deployments
+├── Login.tsx              # OAuth login page
+├── TierSelection.tsx      # Subscription tier selection
+├── AcceptInvite.tsx       # Team invite acceptance
+├── DeployImage.tsx        # Deploy custom container image
+├── DeploymentDetails.tsx  # Detailed deployment view
+├── Secrets.tsx            # Secret management
+├── Sandboxes.tsx          # Sandbox list
+├── SandboxDetails.tsx     # Sandbox details and terminal
+├── Teams.tsx              # Team list
+├── TeamSettings.tsx       # Team configuration
+├── OrgSettings.tsx        # Organization settings
+├── Settings.tsx           # User settings
+├── Billing.tsx            # Billing and usage
+├── TemplatesAdmin.tsx     # Template management (admin)
+├── ClientsAdmin.tsx       # Client management (admin)
+└── PlatformAdmin.tsx      # Platform administration
+```
+
+Source: `ui/src/pages/` directory
+
+## Development Setup
+
+### Prerequisites
+
+```json title="package.json"
+{
+  "dependencies": {
+    "@hookform/resolvers": "^5.2.2",
+    "@tanstack/react-query": "^5.90.12",
+    "js-yaml": "^4.1.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-hook-form": "^7.68.0",
+    "react-router-dom": "^7.10.1",
+    "recharts": "^3.6.0",
+    "sonner": "^2.0.7",
+    "zod": "^4.2.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.18",
+    "@types/react": "^19.2.5",
+    "@vitejs/plugin-react": "^5.1.1",
+    "eslint": "^9.39.1",
+    "tailwindcss": "^4.1.18",
+    "typescript": "~5.9.3",
+    "vite": "^7.2.4"
+  }
+}
+```
+
+Source: `ui/package.json:12-42`
+
+### Vite Configuration
+
+```typescript title="vite.config.ts"
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
+import path from 'path'
+
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+    },
+  },
+  server: {
+    proxy: {
+      '/api': 'http://localhost:8080',
+      '/auth': 'http://localhost:8080',
+      '/oauth2': 'http://localhost:8080',
+      '/login': 'http://localhost:8080',
+      '/logout': 'http://localhost:8080',
+    },
+  },
+})
+```
+
+Source: `ui/vite.config.ts:1-24`
+
+### Development Commands
+
+```bash
+# Install dependencies
+npm install
+
+# Start development server
+npm run dev
+
+# Build for production
+npm run build
+
+# Lint code
+npm run lint
+
+# Preview production build
+npm run preview
+```
+
+## Key Features
+
+### Path Aliasing
+
+Vite is configured with `@` alias pointing to `src/` for clean imports:
+
+```typescript
+import { api } from '@/api/client';
+import { useAuth } from '@/api/hooks';
+import { Button } from '@/components/common';
+```
+
+### Development Proxy
+
+Vite proxies API requests to the Go backend during development:
+
+- `/api/*` → `http://localhost:8080`
+- `/auth/*` → `http://localhost:8080`
+- `/oauth2/*` → `http://localhost:8080`
+
+Source: `ui/vite.config.ts:14-21`
+
+### Hot Module Replacement
+
+Vite provides instant HMR for React components with state preservation.
+
+### TypeScript Strict Mode
+
+The project uses TypeScript strict mode for maximum type safety:
+
+```json title="tsconfig.json"
+{
+  "compilerOptions": {
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
+  }
+}
+```
+
+## State Management
+
+The application uses TanStack Query for server state and React Context for UI state:
+
+- **Server state**: TanStack Query handles all API data
+- **Auth state**: `AuthProvider` context for user session
+- **Theme state**: `ThemeProvider` context for dark/light mode
+- **Local state**: React hooks (`useState`, `useReducer`)
+
+## Styling
+
+The UI uses Tailwind CSS 4 with the Vite plugin for instant compilation:
+
+```typescript
+import tailwindcss from '@tailwindcss/vite'
+
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+})
+```
+
+Source: `ui/vite.config.ts:3,8`
+
+## Build Output
+
+Production builds are optimized with:
+
+- Code splitting
+- Tree shaking
+- Asset optimization
+- Minification
+
+Build output goes to `ui/dist/` and is served by the Go backend.
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="Server Architecture" href="/k8s-scheduler/server" icon="server">
+    Go backend with HTTP handlers and middleware
+  </Card>
+  <Card title="Operator" href="/k8s-scheduler/operator" icon="kubernetes">
+    Kubernetes operator for deployment reconciliation
+  </Card>
+</CardGroup>

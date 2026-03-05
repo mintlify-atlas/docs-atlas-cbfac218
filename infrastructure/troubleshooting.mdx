@@ -1,0 +1,534 @@
+---
+title: Troubleshooting
+description: Common issues and solutions for Shipyard infrastructure deployment
+---
+
+This guide covers common issues you may encounter when deploying and managing Shipyard infrastructure, along with their solutions.
+
+## Tailscale Issues
+
+### Tailscale Not Connecting
+
+**Symptoms:**
+- Subnet router doesn't appear in Tailscale admin console
+- Device shows as offline
+- Cannot ping VPC private IPs
+
+**Solutions:**
+
+<Steps>
+  <Step title="Check instance has internet access">
+    Verify the Tailscale router instance is in a public subnet with internet gateway access:
+    
+    ```bash
+    # SSH to the instance (if possible)
+    aws ec2-instance-connect ssh --instance-id i-xxxxx
+    
+    # Test internet connectivity
+    ping 8.8.8.8
+    ```
+  </Step>
+
+  <Step title="Verify auth key is valid">
+    Check that your auth key:
+    - Hasn't expired
+    - Is properly set in environment variables
+    - Has correct permissions and tags
+    
+    Create a new key at [Tailscale Admin](https://login.tailscale.com/admin/settings/keys) if needed.
+  </Step>
+
+  <Step title="Check Tailscale service logs">
+    ```bash
+    # SSH to the instance
+    sudo journalctl -u tailscaled -f
+    
+    # Check user-data script execution
+    cat /var/log/user-data.log
+    ```
+  </Step>
+
+  <Step title="Restart Tailscale service">
+    ```bash
+    sudo systemctl restart tailscaled
+    sudo tailscale up --authkey=$TAILSCALE_AUTH_KEY --advertise-routes=10.0.0.0/16
+    ```
+  </Step>
+</Steps>
+
+### Subnet Routes Not Working
+
+**Symptoms:**
+- Can see subnet router in Tailscale admin
+- Cannot ping VPC private IPs
+- kubectl cannot connect to EKS
+
+**Solutions:**
+
+<AccordionGroup>
+  <Accordion title="Verify routes are approved">
+    1. Go to [Tailscale Machines](https://login.tailscale.com/admin/machines)
+    2. Find your subnet router
+    3. Check that subnet routes are shown and approved
+    4. If not approved, click "Review" and approve them manually
+  </Accordion>
+
+  <Accordion title="Check ACL auto-approvers">
+    Ensure your Tailscale ACL includes:
+    
+    ```json
+    {
+      "autoApprovers": {
+        "routes": {
+          "10.0.0.0/8": ["tag:aws-router"],
+          "172.16.0.0/12": ["tag:aws-router"],
+          "192.168.0.0/16": ["tag:aws-router"]
+        }
+      },
+      "tagOwners": {
+        "tag:aws-router": ["autogroup:admin"]
+      }
+    }
+    ```
+    
+    Update at [Tailscale ACLs](https://login.tailscale.com/admin/acls)
+  </Accordion>
+
+  <Accordion title="Verify security groups">
+    Check that the subnet router security group allows:
+    - Outbound: All traffic to 0.0.0.0/0
+    - Inbound: All traffic from VPC CIDR (10.0.0.0/16)
+  </Accordion>
+</AccordionGroup>
+
+## EKS Issues
+
+### EKS API Not Accessible
+
+**Symptoms:**
+- `kubectl` commands timeout
+- "Unable to connect to the server" errors
+- Connection refused errors
+
+**Solutions:**
+
+<Steps>
+  <Step title="Verify Tailscale connection">
+    ```bash
+    tailscale status
+    
+    # Test VPC connectivity
+    ping 10.0.1.10
+    ```
+  </Step>
+
+  <Step title="Update kubeconfig">
+    ```bash
+    aws eks update-kubeconfig --name dev-eks-cluster --region us-east-2
+    ```
+  </Step>
+
+  <Step title="Verify AWS credentials">
+    ```bash
+    aws sts get-caller-identity
+    ```
+    
+    Ensure the returned identity has EKS access.
+  </Step>
+
+  <Step title="Check cluster endpoint">
+    ```bash
+    aws eks describe-cluster --name dev-eks-cluster --region us-east-2 \
+      --query 'cluster.endpoint' --output text
+    ```
+    
+    Verify this is a private endpoint within your VPC.
+  </Step>
+
+  <Step title="Verify security group rules">
+    Check that the EKS cluster security group allows:
+    - Port 443 from VPC CIDR
+    - All traffic from node security group
+  </Step>
+</Steps>
+
+### Pods Not Starting
+
+**Symptoms:**
+- Pods stuck in `Pending` state
+- `ImagePullBackOff` errors
+- `CrashLoopBackOff` errors
+
+**Solutions:**
+
+<AccordionGroup>
+  <Accordion title="Check pod events">
+    ```bash
+    kubectl describe pod <pod-name> -n <namespace>
+    ```
+    
+    Look for errors in the Events section.
+  </Accordion>
+
+  <Accordion title="Insufficient resources">
+    ```bash
+    # Check node resources
+    kubectl top nodes
+    
+    # Check pod resource requests
+    kubectl describe pod <pod-name> -n <namespace> | grep -A5 Requests
+    ```
+    
+    If nodes are at capacity, scale your node group.
+  </Accordion>
+
+  <Accordion title="Image pull issues">
+    ```bash
+    # Check if image exists
+    docker pull <image-name>
+    
+    # Verify imagePullSecrets if using private registry
+    kubectl get secrets -n <namespace>
+    ```
+  </Accordion>
+
+  <Accordion title="Application errors">
+    ```bash
+    # Check pod logs
+    kubectl logs <pod-name> -n <namespace>
+    
+    # Check previous instance logs if pod is restarting
+    kubectl logs <pod-name> -n <namespace> --previous
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Vault Issues
+
+### Vault Not Initializing
+
+**Symptoms:**
+- Vault pods show `0/1` ready
+- `vault status` shows sealed
+- Initialization fails
+
+**Solutions:**
+
+<Steps>
+  <Step title="Check pod status">
+    ```bash
+    kubectl get pods -n vault
+    kubectl describe pod vault-0 -n vault
+    ```
+  </Step>
+
+  <Step title="Check pod logs">
+    ```bash
+    kubectl logs -n vault vault-0
+    ```
+    
+    Look for errors related to KMS or DynamoDB.
+  </Step>
+
+  <Step title="Verify KMS key permissions">
+    Ensure the EKS node IAM role has permissions:
+    - `kms:Decrypt`
+    - `kms:Encrypt`
+    - `kms:DescribeKey`
+    
+    On the KMS key used for Vault auto-unseal.
+  </Step>
+
+  <Step title="Verify DynamoDB access">
+    ```bash
+    # Check if table exists
+    aws dynamodb describe-table --table-name vault-storage-dev
+    ```
+    
+    Ensure the node IAM role has DynamoDB permissions.
+  </Step>
+
+  <Step title="Manual initialization (if needed)">
+    ```bash
+    # Exec into Vault pod
+    kubectl exec -n vault vault-0 -- vault operator init
+    
+    # Save the output securely!
+    ```
+  </Step>
+</Steps>
+
+### Vault Sealed
+
+**Symptoms:**
+- Vault status shows `Sealed: true`
+- Applications cannot access secrets
+
+**Solutions:**
+
+```bash
+# Check Vault status
+kubectl exec -n vault vault-0 -- vault status
+
+# Vault should auto-unseal with KMS
+# If it remains sealed, check KMS permissions
+
+# Check Vault logs for unseal errors
+kubectl logs -n vault vault-0 | grep -i unseal
+
+# Restart Vault pod if needed
+kubectl delete pod -n vault vault-0
+```
+
+## Certificate Issues
+
+### Certificates Not Issuing
+
+**Symptoms:**
+- Certificate shows `Ready: False`
+- Let's Encrypt challenges fail
+- TLS errors when accessing services
+
+**Solutions:**
+
+<Steps>
+  <Step title="Check certificate status">
+    ```bash
+    kubectl get certificates -A
+    kubectl describe certificate <cert-name> -n <namespace>
+    ```
+  </Step>
+
+  <Step title="Check challenges">
+    ```bash
+    kubectl get challenges -A
+    kubectl describe challenge <challenge-name> -n <namespace>
+    ```
+  </Step>
+
+  <Step title="Verify Cloudflare API token">
+    ```bash
+    # Test API token
+    curl -X GET "https://api.cloudflare.com/client/v4/user/tokens/verify" \
+      -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+    ```
+    
+    Ensure the token has:
+    - Zone:DNS:Edit
+    - Zone:Zone:Read
+  </Step>
+
+  <Step title="Check cert-manager logs">
+    ```bash
+    kubectl logs -n cert-manager deployment/cert-manager
+    ```
+  </Step>
+
+  <Step title="Check rate limits">
+    Let's Encrypt has rate limits:
+    - 50 certificates per domain per week
+    - 5 failed validations per hour
+    
+    Use staging issuer for testing:
+    ```yaml
+    issuerRef:
+      name: letsencrypt-staging
+      kind: ClusterIssuer
+    ```
+  </Step>
+</Steps>
+
+## Terraform Issues
+
+### State Lock Errors
+
+**Symptoms:**
+- "Error acquiring the state lock"
+- Terraform operations hang
+
+**Solutions:**
+
+```bash
+# Check lock status
+aws dynamodb get-item --table-name shipyard-terraform-locks-dev \
+  --key '{"LockID": {"S": "<lock-id>"}}'
+
+# Force unlock (use with caution!)
+terraform force-unlock <lock-id>
+```
+
+<Warning>
+  Only use `force-unlock` if you're certain no other Terraform process is running.
+</Warning>
+
+### Resource Already Exists
+
+**Symptoms:**
+- "AlreadyExists" errors
+- "Resource already exists" errors
+
+**Solutions:**
+
+<AccordionGroup>
+  <Accordion title="Import existing resource">
+    ```bash
+    terraform import <resource-type>.<resource-name> <resource-id>
+    ```
+    
+    Example:
+    ```bash
+    terraform import aws_s3_bucket.state_bucket shipyard-terraform-state-dev
+    ```
+  </Accordion>
+
+  <Accordion title="Remove from state">
+    If the resource should not be managed by Terraform:
+    ```bash
+    terraform state rm <resource-type>.<resource-name>
+    ```
+  </Accordion>
+
+  <Accordion title="Rename in Terraform">
+    If there's a naming conflict, update the resource name in your Terraform code.
+  </Accordion>
+</AccordionGroup>
+
+### Provider Configuration Errors
+
+**Symptoms:**
+- "Error configuring provider"
+- Authentication errors
+
+**Solutions:**
+
+```bash
+# Verify AWS credentials
+aws sts get-caller-identity
+
+# Verify environment variables
+env | grep TF_VAR
+env | grep AWS
+
+# Re-initialize Terraform
+rm -rf .terraform
+terraform init
+```
+
+## ArgoCD Issues
+
+### Applications Out of Sync
+
+**Symptoms:**
+- Application shows "OutOfSync" status
+- Deployed resources don't match Git
+
+**Solutions:**
+
+```bash
+# Check application status
+kubectl get application <app-name> -n argocd -o yaml
+
+# Sync application
+argocd app sync <app-name>
+
+# Force sync (ignores differences)
+argocd app sync <app-name> --force
+
+# Check sync errors
+argocd app get <app-name>
+```
+
+### GitHub Integration Not Working
+
+**Symptoms:**
+- ApplicationSets not discovering repos
+- "Failed to list repositories" errors
+
+**Solutions:**
+
+<Steps>
+  <Step title="Verify GitHub App credentials">
+    ```bash
+    kubectl get secret -n argocd github-app-secret -o yaml
+    ```
+    
+    Ensure:
+    - App ID is correct
+    - Installation ID is correct
+    - Private key is valid
+  </Step>
+
+  <Step title="Check GitHub App permissions">
+    In GitHub, verify the app has:
+    - Repository: Contents (Read)
+    - Repository: Metadata (Read)
+  </Step>
+
+  <Step title="Check ArgoCD application controller logs">
+    ```bash
+    kubectl logs -n argocd deployment/argocd-application-controller
+    ```
+  </Step>
+</Steps>
+
+## Network Issues
+
+### DNS Not Resolving
+
+**Symptoms:**
+- Services not accessible by domain name
+- "Name or service not known" errors
+
+**Solutions:**
+
+```bash
+# Check external-dns pod
+kubectl get pods -n external-dns
+
+# Check external-dns logs
+kubectl logs -n external-dns deployment/external-dns
+
+# Verify Cloudflare DNS records
+curl -X GET "https://api.cloudflare.com/client/v4/zones/<zone-id>/dns_records" \
+  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+
+# Test DNS resolution
+nslookup vault.yourdomain.com
+dig vault.yourdomain.com
+```
+
+### Load Balancer Not Created
+
+**Symptoms:**
+- Ingress has no external IP/hostname
+- Service of type LoadBalancer stuck pending
+
+**Solutions:**
+
+```bash
+# Check AWS Load Balancer Controller logs
+kubectl logs -n kube-system deployment/aws-load-balancer-controller
+
+# Verify ingress annotations
+kubectl get ingress <ingress-name> -n <namespace> -o yaml
+
+# Check service events
+kubectl describe service <service-name> -n <namespace>
+
+# Verify subnet tags
+aws ec2 describe-subnets --filters Name=vpc-id,Values=<vpc-id> \
+  --query 'Subnets[*].[SubnetId,Tags]'
+```
+
+## Getting More Help
+
+If you continue to experience issues:
+
+1. **Check logs**: Most issues can be diagnosed from pod and service logs
+2. **Review AWS Console**: Check CloudWatch logs, security groups, and IAM permissions
+3. **Verify prerequisites**: Ensure all required tools and accounts are properly configured
+4. **Check resource quotas**: AWS service quotas may limit resource creation
+
+<Card title="Destroying Resources" icon="trash" href="/infrastructure/destroying">
+  If you need to start over, learn how to safely tear down infrastructure
+</Card>

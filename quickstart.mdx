@@ -1,80 +1,292 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: "Quick Start"
+description: "Get Shipyard running locally in minutes"
 ---
 
-## Get started in three steps
+This guide will get you up and running with Shipyard's k8s-scheduler platform on your local machine using Kind (Kubernetes in Docker).
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
+Before you begin, ensure you have the following installed:
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Docker" icon="docker">
+    Required for running Kind cluster
+  </Card>
+  <Card title="kubectl" icon="dharmachakra">
+    Kubernetes command-line tool
+  </Card>
+  <Card title="kind" icon="cubes">
+    Kubernetes in Docker
+  </Card>
+  <Card title="Helm" icon="box">
+    Kubernetes package manager
+  </Card>
 </CardGroup>
 
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+<CodeGroup>
+
+```bash macOS
+# Install using Homebrew
+brew install docker kubectl kind helm
+```
+
+```bash Linux
+# Install Docker
+curl -fsSL https://get.docker.com -o get-docker.sh
+sh get-docker.sh
+
+# Install kubectl
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+
+# Install kind
+curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
+chmod +x kind && sudo mv kind /usr/local/bin/
+
+# Install Helm
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+```
+
+</CodeGroup>
+
+## One-Command Setup
+
+Clone the repository and start the local development environment:
+
+```bash
+git clone https://github.com/ops-north/shipyard.git
+cd shipyard/k8s-scheduler
+make dev-local
+```
+
+This single command will:
+
+<Steps>
+  <Step title="Create Kind cluster">
+    Creates a local Kubernetes cluster with port mappings for accessing services
+  </Step>
+
+  <Step title="Deploy PostgreSQL">
+    Installs PostgreSQL for storing users, organizations, teams, and deployments
+  </Step>
+
+  <Step title="Build container images">
+    Builds the Go server and operator Docker images
+  </Step>
+
+  <Step title="Deploy to Kubernetes">
+    Deploys the server, operator, and all dependencies to the Kind cluster
+  </Step>
+
+  <Step title="Start Traefik ingress">
+    Configures ingress routing for user deployments
+  </Step>
+</Steps>
+
+## Accessing the Platform
+
+Once the setup completes (approximately 3-5 minutes), you can access:
+
+### Web Interface
+
+Open your browser and navigate to:
+
+```
+http://localhost:8081
+```
+
+<Info>
+In development mode, you'll be automatically logged in as `dev@localhost` with no OAuth required.
+</Info>
+
+### What You'll See
+
+The dashboard displays:
+- **Deployments**: Your active and pending deployments
+- **Teams**: Team management and invitations
+- **Templates**: Available deployment templates
+- **Secrets**: Three-tier secrets management
+
+## Create Your First Deployment
+
+<Steps>
+  <Step title="Navigate to Deployments">
+    Click **Deployments** in the sidebar to view your deployments page.
+  </Step>
+
+  <Step title="Click New Deployment">
+    Click the **New Deployment** button in the top right.
+  </Step>
+
+  <Step title="Select a template">
+    Choose from available templates:
+    - **nginx** - Simple web server
+    - **postgres** - PostgreSQL database
+    - **redis** - Redis cache
+    - **LibreChat** - AI chat platform (multi-service)
+  </Step>
+
+  <Step title="Configure and deploy">
+    - Enter a deployment name (e.g., `my-nginx`)
+    - Set any required environment variables
+    - Configure secrets (optional)
+    - Click **Deploy**
+  </Step>
+
+  <Step title="Access your deployment">
+    Once running, your deployment will be available at:
+    ```
+    http://<deployment-name>.localhost:8080
+    ```
+    
+    For example: `http://my-nginx.localhost:8080`
+  </Step>
+</Steps>
+
+## Viewing Logs
+
+Monitor your deployment logs in real-time:
+
+<Tabs>
+  <Tab title="Dashboard UI">
+    1. Click on your deployment in the dashboard
+    2. Navigate to the **Logs** tab
+    3. View live streaming logs from all services
+  </Tab>
+
+  <Tab title="kubectl">
+    ```bash
+    # List all pods in your namespace
+    kubectl get pods -n sandbox-dev-user
+
+    # View logs from a specific pod
+    kubectl logs -f <pod-name> -n sandbox-dev-user
+    ```
+  </Tab>
+
+  <Tab title="Docker">
+    ```bash
+    # Find the Kind container
+    docker ps | grep kind
+
+    # Access the Kind cluster
+    docker exec -it kind-control-plane bash
+
+    # View logs inside the container
+    kubectl logs -f <pod-name> -n sandbox-dev-user
+    ```
+  </Tab>
+</Tabs>
+
+## Development Workflow
+
+### Making Changes to the Server
+
+```bash
+# Edit code in internal/server/ or cmd/server/
+
+# Rebuild and reload
+make dev-reload
+
+# Server will restart with your changes
+```
+
+### Making Changes to the Operator
+
+```bash
+# Edit code in internal/operator/ or cmd/operator/
+
+# Rebuild and redeploy operator
+make dev-reload-operator
+```
+
+### Making Changes to the UI
+
+```bash
+# Navigate to the UI directory
+cd ui
+
+# Start the Vite dev server with hot reload
+npm run dev
+
+# UI will be available at http://localhost:5173
+# with API proxied to http://localhost:8081
+```
+
+## Cleanup
+
+When you're done, tear down the local environment:
+
+```bash
+make dev-local-down
+```
+
+This removes:
+- The Kind cluster
+- All deployed resources
+- Container images (optional: use `make dev-local-clean` to also remove images)
+
+<Warning>
+This will delete all data in the local PostgreSQL database. Deployments and configurations will be lost.
+</Warning>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Server not starting">
+    Check the server logs:
+    ```bash
+    kubectl logs -f deployment/server -n default
+    ```
+    
+    Common issues:
+    - Database connection failed: Ensure PostgreSQL is running
+    - Port 8081 already in use: Stop other services using this port
+  </Accordion>
+
+  <Accordion title="Cannot access deployments at .localhost">
+    Ensure Traefik is running:
+    ```bash
+    kubectl get pods -n traefik
+    ```
+    
+    Restart port forwarding:
+    ```bash
+    kubectl port-forward -n traefik svc/traefik 8080:80
+    ```
+  </Accordion>
+
+  <Accordion title="Kind cluster creation fails">
+    Delete existing cluster and retry:
+    ```bash
+    kind delete cluster --name shipyard
+    make dev-local
+    ```
+  </Accordion>
+
+  <Accordion title="Images not building">
+    Clean Docker build cache:
+    ```bash
+    docker system prune -a
+    make dev-local
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Architecture" icon="sitemap" href="/architecture">
+    Understand Shipyard's system architecture
+  </Card>
+  <Card title="Local Development" icon="laptop-code" href="/k8s-scheduler/local-development">
+    Deep dive into local development workflows
+  </Card>
+  <Card title="Deployment Guide" icon="rocket" href="/k8s-scheduler/deployment-guide">
+    Deploy to production on AWS
+  </Card>
+  <Card title="API Reference" icon="code" href="/k8s-scheduler/api/authentication">
+    Explore the REST API
+  </Card>
+</CardGroup>

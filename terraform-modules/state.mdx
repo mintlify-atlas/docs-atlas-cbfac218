@@ -1,0 +1,525 @@
+---
+title: "State Module"
+description: "S3 bucket and DynamoDB table for Terraform remote state with locking"
+---
+
+## Overview
+
+The State module creates AWS resources for Terraform remote state storage with state locking. It provisions a versioned, encrypted S3 bucket and a DynamoDB table for state locking to prevent concurrent modifications.
+
+## Features
+
+<CardGroup cols={2}>
+  <Card title="S3 Bucket" icon="folder">
+    Versioned, encrypted bucket with public access blocked
+  </Card>
+  
+  <Card title="State Locking" icon="lock">
+    DynamoDB table for concurrent access prevention
+  </Card>
+  
+  <Card title="Encryption" icon="shield-halved">
+    Server-side encryption with AES256
+  </Card>
+  
+  <Card title="Versioning" icon="clock-rotate-left">
+    Automatic versioning for state file history
+  </Card>
+  
+  <Card title="Public Access Blocked" icon="ban">
+    S3 public access block for security
+  </Card>
+  
+  <Card title="Pay-Per-Request" icon="dollar-sign">
+    DynamoDB on-demand billing for cost efficiency
+  </Card>
+</CardGroup>
+
+## Why Remote State?
+
+<AccordionGroup>
+  <Accordion title="Team Collaboration">
+    Remote state allows multiple team members to work on the same infrastructure without conflicts. State locking prevents simultaneous modifications.
+  </Accordion>
+
+  <Accordion title="Security">
+    Storing state locally exposes sensitive data (passwords, keys). Remote state in S3 provides encryption at rest and access control via IAM.
+  </Accordion>
+
+  <Accordion title="State History">
+    S3 versioning maintains a history of state files, allowing rollback if needed.
+  </Accordion>
+
+  <Accordion title="Automation">
+    CI/CD pipelines require shared state storage. Remote state enables automated Terraform runs in GitHub Actions, GitLab CI, etc.
+  </Accordion>
+</AccordionGroup>
+
+## Usage
+
+### Step 1: Create State Backend
+
+Deploy the state module first (using local state):
+
+```hcl
+# state-backend.tf
+
+terraform {
+  required_version = ">= 1.0"
+  
+  # Use local state initially
+  # After creating the backend, migrate to remote state
+}
+
+provider "aws" {
+  region = "us-east-1"
+}
+
+module "state" {
+  source = "git@github.com:opsnorth/terraform-modules.git//state?ref=v1.0.0"
+
+  environment = "production"
+
+  tags = {
+    Environment = "production"
+    Purpose     = "terraform-state"
+  }
+}
+
+output "s3_bucket_id" {
+  value = module.state.s3_bucket_id
+}
+
+output "dynamodb_table_name" {
+  value = module.state.dynamodb_table_name
+}
+
+output "backend_config" {
+  value = <<-EOT
+    terraform {
+      backend "s3" {
+        bucket         = "${module.state.s3_bucket_id}"
+        key            = "terraform.tfstate"
+        region         = "us-east-1"
+        dynamodb_table = "${module.state.dynamodb_table_name}"
+        encrypt        = true
+      }
+    }
+  EOT
+}
+```
+
+```bash
+# Deploy the backend
+terraform init
+terraform apply
+
+# Save the bucket and table names
+terraform output -raw backend_config
+```
+
+### Step 2: Configure Backend in Main Infrastructure
+
+Update your main Terraform configuration to use remote state:
+
+```hcl
+# main.tf
+
+terraform {
+  required_version = ">= 1.0"
+  
+  backend "s3" {
+    bucket         = "terraform-state-production-123456789012"
+    key            = "production/terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "terraform-state-lock-production"
+    encrypt        = true
+  }
+}
+
+provider "aws" {
+  region = "us-east-1"
+}
+
+# Your infrastructure modules
+module "vpc" {
+  source = "git@github.com:opsnorth/terraform-modules.git//vpc?ref=v1.0.0"
+  # ...
+}
+
+module "eks" {
+  source = "git@github.com:opsnorth/terraform-modules.git//eks?ref=v1.0.0"
+  # ...
+}
+```
+
+```bash
+# Initialize with the new backend
+terraform init
+
+# Terraform will prompt to migrate existing state
+# Type 'yes' to copy local state to S3
+```
+
+### Step 3: Migrate State Backend to Remote
+
+<Warning>
+After creating the backend, you should migrate the state backend configuration itself to use remote state. This creates a circular dependency that needs careful handling.
+</Warning>
+
+```hcl
+# state-backend.tf (updated)
+
+terraform {
+  required_version = ">= 1.0"
+  
+  backend "s3" {
+    bucket         = "terraform-state-production-123456789012"
+    key            = "state-backend/terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "terraform-state-lock-production"
+    encrypt        = true
+  }
+}
+
+# ... rest of configuration
+```
+
+```bash
+# Re-initialize to migrate state backend's own state
+terraform init -migrate-state
+```
+
+## Environment-Specific Backends
+
+Create separate state backends per environment:
+
+```hcl
+# Development
+module "state_dev" {
+  source = "git@github.com:opsnorth/terraform-modules.git//state?ref=v1.0.0"
+  
+  environment = "dev"
+}
+
+# Staging
+module "state_staging" {
+  source = "git@github.com:opsnorth/terraform-modules.git//state?ref=v1.0.0"
+  
+  environment = "staging"
+}
+
+# Production
+module "state_production" {
+  source = "git@github.com:opsnorth/terraform-modules.git//state?ref=v1.0.0"
+  
+  environment = "production"
+}
+```
+
+## State File Organization
+
+Organize state files using different keys:
+
+```
+terraform-state-bucket/
+├── production/
+│   ├── network/terraform.tfstate       # VPC
+│   ├── compute/terraform.tfstate       # EKS
+│   ├── data/terraform.tfstate          # RDS
+│   └── secrets/terraform.tfstate       # Vault
+├── staging/
+│   └── terraform.tfstate
+└── dev/
+    └── terraform.tfstate
+```
+
+**Backend configuration per layer:**
+
+```hcl
+# Network layer
+terraform {
+  backend "s3" {
+    bucket = "terraform-state-production"
+    key    = "production/network/terraform.tfstate"
+    # ...
+  }
+}
+
+# Compute layer
+terraform {
+  backend "s3" {
+    bucket = "terraform-state-production"
+    key    = "production/compute/terraform.tfstate"
+    # ...
+  }
+}
+```
+
+## Inputs
+
+| Name | Description | Type | Default | Required |
+|------|-------------|------|---------|:--------:|
+| `environment` | Environment name (e.g., dev, staging, prod) | `string` | n/a | yes |
+| `force_destroy` | Allow S3 bucket destruction with objects | `bool` | `false` | no |
+| `tags` | Tags to apply | `map(string)` | `{}` | no |
+
+## Outputs
+
+| Name | Description |
+|------|-------------|
+| `s3_bucket_id` | S3 bucket name (use in backend config) |
+| `s3_bucket_arn` | S3 bucket ARN |
+| `dynamodb_table_name` | DynamoDB table name (use in backend config) |
+| `dynamodb_table_arn` | DynamoDB table ARN |
+
+## State Locking
+
+DynamoDB provides automatic state locking:
+
+```bash
+# Terminal 1: Acquire lock
+terraform apply
+# Lock acquired: LockID=terraform-state-production/production/terraform.tfstate
+
+# Terminal 2: Try to acquire lock (blocked)
+terraform apply
+# Error: Error acquiring the state lock
+# Lock Info:
+#   ID: abc123...
+#   Path: terraform-state-production/production/terraform.tfstate
+#   Operation: OperationTypeApply
+#   Who: user@hostname
+#   Created: 2024-01-15 10:30:00
+```
+
+### Force Unlock (Use with Caution)
+
+```bash
+# Only if you're certain no one else is using the state
+terraform force-unlock <LOCK_ID>
+```
+
+<Warning>
+Force unlocking can cause state corruption if another process is actively using the state. Only use when certain the lock is stale.
+</Warning>
+
+## State File Security
+
+### Sensitive Data in State
+
+Terraform state files contain sensitive data:
+- Database passwords
+- API keys
+- Private keys
+- Resource IDs
+
+**Security measures:**
+
+<CardGroup cols={2}>
+  <Card title="Encryption at Rest" icon="lock">
+    S3 server-side encryption with AES256 (enabled by default)
+  </Card>
+  
+  <Card title="Encryption in Transit" icon="shield-halved">
+    HTTPS for all S3 API calls (enforced by AWS)
+  </Card>
+  
+  <Card title="Access Control" icon="user-lock">
+    Restrict S3 bucket access via IAM policies to authorized users only
+  </Card>
+  
+  <Card title="Versioning" icon="clock-rotate-left">
+    S3 versioning prevents accidental deletions and allows rollback
+  </Card>
+</CardGroup>
+
+### IAM Policy for State Access
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket",
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::terraform-state-production",
+        "arn:aws:s3:::terraform-state-production/*"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:DeleteItem"
+      ],
+      "Resource": "arn:aws:dynamodb:us-east-1:123456789012:table/terraform-state-lock-production"
+    }
+  ]
+}
+```
+
+## Backup and Recovery
+
+### S3 Versioning
+
+Versioning is enabled by default. To restore a previous version:
+
+```bash
+# List versions
+aws s3api list-object-versions \
+  --bucket terraform-state-production \
+  --prefix production/terraform.tfstate
+
+# Download specific version
+aws s3api get-object \
+  --bucket terraform-state-production \
+  --key production/terraform.tfstate \
+  --version-id <VERSION_ID> \
+  terraform.tfstate.backup
+
+# Restore by copying back
+aws s3 cp terraform.tfstate.backup \
+  s3://terraform-state-production/production/terraform.tfstate
+```
+
+### Manual Backup
+
+```bash
+# Pull current state
+terraform state pull > terraform.tfstate.backup
+
+# Push backup (if needed)
+terraform state push terraform.tfstate.backup
+```
+
+<Tip>
+Regularly backup state files before major infrastructure changes.
+</Tip>
+
+## Cost Considerations
+
+### S3 Costs
+
+- Storage: ~$0.023/GB/month (Standard)
+- State files are typically < 1 MB
+- **Cost: < $0.01/month per state file**
+
+### DynamoDB Costs
+
+- On-demand pricing: $1.25 per million write requests
+- Typical usage: ~100 lock operations/day
+- **Cost: ~$0.01/month**
+
+### Total Monthly Cost
+
+**~$0.10-0.50/month** depending on number of state files and operations.
+
+<Info>
+The state backend is extremely cost-effective compared to the value it provides for team collaboration and state safety.
+</Info>
+
+## Troubleshooting
+
+### State Lock Timeout
+
+**Error:**
+```
+Error: Error acquiring the state lock
+```
+
+**Solutions:**
+
+1. **Wait for lock to release** (someone else is running Terraform)
+2. **Check DynamoDB table:**
+   ```bash
+   aws dynamodb scan --table-name terraform-state-lock-production
+   ```
+3. **Force unlock if stale:**
+   ```bash
+   terraform force-unlock <LOCK_ID>
+   ```
+
+### Cannot Access State File
+
+**Error:**
+```
+Error: Failed to get existing workspaces: AccessDenied
+```
+
+**Check IAM permissions:**
+```bash
+aws s3 ls s3://terraform-state-production/
+aws dynamodb describe-table --table-name terraform-state-lock-production
+```
+
+### State Drift
+
+If state becomes out of sync with actual resources:
+
+```bash
+# Refresh state from AWS
+terraform refresh
+
+# Or import resources
+terraform import <resource_type>.<name> <resource_id>
+
+# Or recreate state
+terraform state rm <resource>
+terraform import <resource_type>.<name> <resource_id>
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="One Backend Per Environment" icon="layer-group">
+    Create separate state backends for dev, staging, and production to prevent accidental changes.
+  </Card>
+  
+  <Card title="Use State Locking" icon="lock">
+    Always use DynamoDB for state locking to prevent concurrent modifications.
+  </Card>
+  
+  <Card title="Enable Versioning" icon="clock-rotate-left">
+    S3 versioning provides safety net for accidental state corruption.
+  </Card>
+  
+  <Card title="Restrict Access" icon="user-lock">
+    Use IAM policies to limit state file access to authorized users only.
+  </Card>
+  
+  <Card title="Separate State Files" icon="folder-tree">
+    Split infrastructure into layers (network, compute, data) with separate state files.
+  </Card>
+  
+  <Card title="Regular Backups" icon="floppy-disk">
+    Backup state files before major infrastructure changes.
+  </Card>
+</CardGroup>
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="Usage Guide" icon="book" href="/terraform-modules/usage">
+    State management patterns and best practices
+  </Card>
+  
+  <Card title="Infrastructure Guide" icon="book" href="/infrastructure/overview">
+    Complete deployment workflow
+  </Card>
+  
+  <Card title="VPC Module" icon="network-wired" href="/terraform-modules/vpc">
+    Start deploying infrastructure
+  </Card>
+  
+  <Card title="Terraform Docs" icon="file-lines" href="https://www.terraform.io/docs/language/settings/backends/s3.html">
+    Official Terraform S3 backend documentation
+  </Card>
+</CardGroup>
